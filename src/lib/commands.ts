@@ -185,6 +185,16 @@ export const commands: Command[] = [
   { id: 'view.palette', title: 'Command palette', description: 'Search every action.', shortcut: 'Mod+K', run: () => s().setDialog('palette') },
   { id: 'view.shortcuts', title: 'Keyboard shortcuts', description: 'Show all keyboard shortcuts.', shortcut: 'Shift+?', run: () => s().setDialog('shortcuts') },
 
+  { id: 'file.projects', title: 'Projects', description: 'Open, create or delete projects saved in this browser.', shortcut: 'Mod+O', run: () => s().setDialog('projects') },
+  {
+    id: 'file.new',
+    title: 'New project',
+    description: 'Start a new, empty project. The current project stays in your project list.',
+    run: async () => {
+      await smart.captureThumbnail();
+      await s().newProject();
+    },
+  },
   { id: 'file.import', title: 'Import media', description: 'Choose video, audio or image files to import.', shortcut: 'Mod+I', run: openFilePicker },
   { id: 'file.record', title: 'Record screen', description: 'Open the screen recorder.', shortcut: 'R', run: () => s().setDialog('record') },
   { id: 'file.export', title: 'Export video', description: 'Open the export dialog.', shortcut: 'Mod+E', run: () => s().setDialog('export') },

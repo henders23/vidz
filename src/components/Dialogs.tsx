@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, Mic, Monitor, X } from 'lucide-react';
+import { Camera, Film, Mic, Monitor, Plus, Trash2, X } from 'lucide-react';
+import { captureThumbnail } from '../lib/smart';
 import { useStore } from '../store';
 import { commands, invokeCommand, paletteCommands, shortcutLabel } from '../lib/commands';
 import { ExportOptions, ExportResult, exportProject, supportsExport } from '../lib/export';
@@ -266,6 +267,71 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+function ago(time: number): string {
+  const minutes = Math.round((Date.now() - time) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60 * 24) return `${Math.round(minutes / 60)} h ago`;
+  return new Date(time).toLocaleDateString();
+}
+
+function ProjectsDialog({ onClose }: { onClose: () => void }) {
+  const projects = useStore((s) => s.projects);
+  const currentId = useStore((s) => s.project.id);
+  const [busy, setBusy] = useState(false);
+  const { openProject, newProject, deleteProject, toast } = useStore.getState();
+
+  // Show an up-to-date picture of the project being worked on.
+  useEffect(() => void captureThumbnail(), []);
+
+  const run = async (action: () => Promise<void>, close = true) => {
+    setBusy(true);
+    try {
+      await action();
+      if (close) onClose();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Projects" onClose={onClose} className="projects">
+      <div className="project-grid">
+        <button className="project-card new" disabled={busy} onClick={() => void run(async () => { await captureThumbnail(); await newProject(); })}>
+          <div className="project-thumb"><Plus size={28} /></div>
+          <strong>New project</strong>
+        </button>
+        {projects.map((p) => (
+          <div key={p.id} className={`project-card ${p.id === currentId ? 'current' : ''}`}>
+            <button className="project-open" disabled={busy} title={p.id === currentId ? 'This project is open' : `Open ${p.name}`} onClick={() => void run(() => openProject(p.id))}>
+              <div className="project-thumb" style={p.thumbnail ? { backgroundImage: `url(${p.thumbnail})` } : undefined}>
+                {!p.thumbnail && <Film size={24} />}
+                {p.id === currentId && <span className="badge">Open</span>}
+              </div>
+              <strong>{p.name || 'Untitled project'}</strong>
+              <small>{formatDuration(p.duration)} · {formatBytes(p.size)} · {ago(p.updatedAt)}</small>
+            </button>
+            <button
+              className="project-delete"
+              title="Delete project"
+              aria-label={`Delete ${p.name}`}
+              disabled={busy}
+              onClick={() => {
+                if (confirm(`Delete "${p.name}" and its media from this browser? This cannot be undone.`)) void run(() => deleteProject(p.id), false);
+              }}
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="modal-note">Projects and their media are stored in this browser on this device. Clearing the browser's site data removes them.</p>
+    </Modal>
+  );
+}
+
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
   const setDialog = useStore((s) => s.setDialog);
@@ -275,5 +341,6 @@ export function Dialogs() {
   if (dialog === 'shortcuts') return <ShortcutsDialog onClose={close} />;
   if (dialog === 'record') return <RecordDialog onClose={close} />;
   if (dialog === 'settings') return <SettingsDialog onClose={close} />;
+  if (dialog === 'projects') return <ProjectsDialog onClose={close} />;
   return null;
 }

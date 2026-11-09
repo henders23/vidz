@@ -34,7 +34,7 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 - **Transcript tools** – speech is transcribed on your device with Whisper (nothing is uploaded). Generate captions, click a word to jump to it, or select words and cut them out of the video. Captions can be saved as SRT or WebVTT files, and the transcript as plain text. Speakers can be told apart and named (also on your device), so the transcript shows who said what.
 - **Remove silences** – cuts silent pauses out of the whole timeline in one click. No AI or key needed.
 - **Export** – frame-accurate MP4 (or WebM) at a chosen resolution, frame rate and quality, with mixed audio.
-- **Autosave** – the project and its media are stored in the browser (IndexedDB) and restored on reload.
+- **Projects** – keep as many projects as you like; each is autosaved with its media in the browser (IndexedDB) and restored on reload. Open, create and delete them from the Projects window (`Ctrl/Cmd+O`).
 - **Command palette** (`Ctrl/Cmd+K`) and keyboard shortcuts (`?`).
 
 ## Architecture
@@ -87,4 +87,4 @@ for hosting vidz publicly with a shared key.
 ## Roadmap
 
 1. Faster transcription on WebGPU.
-2. Multiple projects and an optional desktop build.
+2. An optional desktop build.

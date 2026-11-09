@@ -144,6 +144,11 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// A conversation is about one project: start afresh when another is opened.
+useStore.subscribe((state, prev) => {
+  if (state.project.id !== prev.project.id) useAssistant.getState().reset();
+});
+
 export const useAssistant = create<AssistantState>((set, get) => {
   const add = (item: Omit<ChatItem, 'id'>) => {
     const id = nextItem++;

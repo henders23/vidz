@@ -264,3 +264,16 @@ export function exportCaptions(format: CaptionFormat) {
   downloadBlob(new Blob([body], { type: format === 'vtt' ? 'text/vtt' : 'text/plain' }), name);
   return { message: `Saved ${name}` };
 }
+
+/** Refresh the current project's picture in the project list. */
+export async function captureThumbnail() {
+  const { project, projects, setThumbnail } = s();
+  if (!projects.some((p) => p.id === project.id)) return;
+  const duration = edit.projectDuration(project);
+  if (duration <= 0) return;
+  try {
+    setThumbnail(project.id, `data:image/jpeg;base64,${await frameJpeg(Math.min(1, duration / 2), 320)}`);
+  } catch {
+    // A missing thumbnail is not worth interrupting the user for.
+  }
+}

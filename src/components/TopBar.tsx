@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Download, FilePlus2, Keyboard, Search, Settings, Sparkles, Square, Video } from 'lucide-react';
+import { Check, Download, FolderOpen, Keyboard, Search, Settings, Sparkles, Square, Video } from 'lucide-react';
 import { armHistory, liveEdit, useStore } from '../store';
 import { runCommand, shortcutLabel } from '../lib/commands';
 import { canRecordScreen, useRecorder } from '../lib/recorder';
@@ -33,8 +33,6 @@ function RecordButton() {
 
 export function TopBar() {
   const name = useStore((s) => s.project.name);
-  const newProject = useStore((s) => s.newProject);
-  const hasContent = useStore((s) => s.project.clips.length > 0 || s.project.media.length > 0);
   return (
     <header className="topbar">
       <div className="logo"><span className="logo-mark">▶</span>vidz</div>
@@ -54,15 +52,8 @@ export function TopBar() {
       <button className="btn" title="Open the AI assistant (A)" onClick={() => runCommand('view.assistant')}><Sparkles size={15} /> Assistant</button>
       <button className="icon-btn" title="Settings" aria-label="Settings" onClick={() => runCommand('view.settings')}><Settings size={17} /></button>
       <button className="icon-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={() => runCommand('view.shortcuts')}><Keyboard size={17} /></button>
-      <button
-        className="icon-btn"
-        title="New project"
-        aria-label="New project"
-        onClick={() => {
-          if (!hasContent || confirm('Start a new project? The current project and its media will be removed from this browser.')) void newProject();
-        }}
-      >
-        <FilePlus2 size={17} />
+      <button className="icon-btn" title={`Projects (${shortcutLabel('Mod+O')})`} aria-label="Projects" onClick={() => runCommand('file.projects')}>
+        <FolderOpen size={17} />
       </button>
       <RecordButton />
       <button className="btn primary" onClick={() => runCommand('file.export')}><Download size={15} /> Export</button>
