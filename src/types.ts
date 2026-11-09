@@ -84,6 +84,25 @@ export interface Filters {
   blur: number; // px
 }
 
+/**
+ * A snapshot of a clip's animatable properties at a moment. `time` is seconds
+ * from the clip's start and may fall outside the clip after trimming, so trims
+ * and splits never destroy animation.
+ */
+export interface Keyframe {
+  time: number;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+  /** Region / shape size, for effect and shape clips. */
+  width?: number;
+  height?: number;
+}
+
+export type KeyframeValues = Omit<Keyframe, 'time'>;
+
 export interface Clip {
   id: string;
   trackId: string;
@@ -114,6 +133,10 @@ export interface Clip {
   shape?: ShapeProps;
   effect?: EffectProps;
   transition?: Transition;
+  /** When present, these override x/y/scale/rotation/opacity (and region size) over time. */
+  keyframes?: Keyframe[];
+  /** How to move between keyframes: a flowing curve (default) or straight, constant-speed segments. */
+  motion?: 'smooth' | 'linear';
   /** Text clip generated from the transcript; regenerating captions replaces these. */
   caption?: boolean;
 }

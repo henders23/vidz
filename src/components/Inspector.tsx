@@ -1,4 +1,4 @@
-import { AlignCenter, AlignLeft, AlignRight, Bold, Captions, Italic, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Bold, Captions, ChevronLeft, ChevronRight, Diamond, Italic, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { Assistant } from './Assistant';
 import { Transcript } from './Transcript';
 import { Clip, EffectKind, EffectProps, Filters, Project, ShapeProps, TextProps, TransitionType, canTransition } from '../types';
@@ -292,8 +292,82 @@ function TransitionSection({ clip }: { clip: Clip }) {
   );
 }
 
-function ClipInspector({ clip, project }: { clip: Clip; project: Project }) {
-  const set = (patch: Partial<Clip>) => liveEdit((p) => edit.updateClip(p, clip.id, patch));
+const TRANSFORM_KEYS = new Set(['x', 'y', 'scale', 'rotation', 'opacity']);
+
+function AnimationSection({ clip, project }: { clip: Clip; project: Project }) {
+  const playhead = useStore((s) => s.playhead);
+  const { setPlayhead, commit, toast } = useStore.getState();
+  const kfs = clip.keyframes ?? [];
+  const local = playhead - clip.start;
+  const inside = local >= 0 && local <= clip.duration;
+  const tolerance = 0.5 / project.fps;
+  const current = kfs.findIndex((k) => Math.abs(k.time - local) <= tolerance);
+  const visible = kfs.map((k, index) => ({ k, index })).filter(({ k }) => k.time >= -tolerance && k.time <= clip.duration + tolerance);
+  const previous = [...visible].reverse().find(({ k }) => k.time < local - tolerance);
+  const next = visible.find(({ k }) => k.time > local + tolerance);
+  const add = () => {
+    if (!inside) return toast('Move the playhead onto this clip to add a keyframe there');
+    commit((p) => edit.setKeyframe(p, clip.id, playhead));
+  };
+  return (
+    <Section title="Animation">
+      <div className="insp-buttons">
+        <button className="icon-btn boxed" title="Previous keyframe" aria-label="Previous keyframe" disabled={!previous} onClick={() => previous && setPlayhead(clip.start + previous.k.time)}><ChevronLeft size={15} /></button>
+        {current >= 0 ? (
+          <button className="btn small" onClick={() => commit((p) => edit.removeKeyframe(p, clip.id, current))}><Diamond size={12} fill="currentColor" /> Remove keyframe</button>
+        ) : (
+          <button className="btn small" onClick={add} title="Add a keyframe at the playhead (K)"><Diamond size={12} /> Add keyframe</button>
+        )}
+        <button className="icon-btn boxed" title="Next keyframe" aria-label="Next keyframe" disabled={!next} onClick={() => next && setPlayhead(clip.start + next.k.time)}><ChevronRight size={15} /></button>
+      </div>
+      {kfs.length === 0 ? (
+        <p className="insp-hint">Add a keyframe, move the playhead, then move or resize the clip in the preview. It animates between the two, so it can follow something that moves.</p>
+      ) : (
+        <>
+          <div className="kf-chips">
+            {visible.map(({ k, index }) => (
+              <button key={index} className={index === current ? 'on' : ''} onClick={() => setPlayhead(clip.start + Math.max(0, Math.min(clip.duration - 0.001, k.time)))}>
+                {formatTime(clip.start + k.time, project.fps)}
+              </button>
+            ))}
+          </div>
+          <Row label="Motion">
+            <select value={clip.motion ?? 'smooth'} onChange={(e) => commit((p) => edit.updateClip(p, clip.id, { motion: e.target.value as Clip['motion'] }))}>
+              <option value="smooth">Smooth</option>
+              <option value="linear">Constant speed</option>
+            </select>
+          </Row>
+          <p className="insp-hint">Moving or resizing the clip at another time adds a keyframe there. Drag the diamonds on the timeline to retime them.</p>
+          <div className="insp-buttons">
+            <button className="btn small" onClick={() => commit((p) => edit.clearKeyframes(p, clip.id, playhead))}>Remove animation</button>
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+function ClipInspector({ clip: raw, project }: { clip: Clip; project: Project }) {
+  // Show the clip as it looks at the playhead; an animated clip's values change over time.
+  const playhead = useStore((s) => (edit.isAnimated(raw) ? s.playhead : 0));
+  const clip = edit.resolveClip(raw, playhead);
+  const set = (patch: Partial<Clip>) =>
+    liveEdit((p) => {
+      // Position, size, rotation and opacity go through applyTransform so that an
+      // animated clip gets a keyframe at the playhead instead of a change that is ignored.
+      const transform: Record<string, number> = {};
+      const rest: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(patch)) (TRANSFORM_KEYS.has(key) ? transform : rest)[key] = value as number;
+      for (const box of ['effect', 'shape'] as const) {
+        const next = patch[box];
+        const shown = clip[box];
+        if (!next || !shown) continue;
+        if (next.width !== shown.width) transform.width = next.width;
+        if (next.height !== shown.height) transform.height = next.height;
+      }
+      const updated = Object.keys(rest).length ? edit.updateClip(p, raw.id, rest as Partial<Clip>) : p;
+      return Object.keys(transform).length ? edit.applyTransform(updated, raw.id, useStore.getState().playhead, transform) : updated;
+    });
   const setFilter = (patch: Partial<Filters>) => set({ filters: { ...clip.filters, ...patch } });
   const adjustment = clip.type === 'zoom' || clip.type === 'effect';
   const visual = clip.type !== 'audio' && !adjustment;
@@ -353,6 +427,7 @@ function ClipInspector({ clip, project }: { clip: Clip; project: Project }) {
           />
         </Section>
       )}
+      {clip.type !== 'audio' && <AnimationSection clip={raw} project={project} />}
       {canTransition(clip) && <TransitionSection clip={clip} />}
       {clip.type !== 'zoom' && <Section title="Fades">
         <Slider label="Fade in" value={Math.min(clip.fadeIn, maxFade)} min={0} max={Math.min(5, maxFade)} step={0.1} display={secs} reset={0} onChange={(fadeIn) => set({ fadeIn })} />

@@ -174,6 +174,27 @@ function Filmstrip({ clip, rt, mediaDuration, width, height }: { clip: Clip; rt:
   return <div className="filmstrip">{tiles}</div>;
 }
 
+/** Click a keyframe diamond to jump to it; drag it to change when it happens. */
+function onKeyframeDown(e: React.PointerEvent, clip: Clip, index: number) {
+  if (e.button !== 0) return;
+  e.stopPropagation();
+  const store = useStore.getState();
+  const origin = clip.start + clip.keyframes![index].time;
+  store.select([clip.id]);
+  store.setPlaying(false);
+  store.setPlayhead(origin);
+  let started = false;
+  startDrag(e, (dx) => {
+    if (!started) {
+      started = true;
+      store.checkpoint();
+    }
+    store.mutate((p) => edit.moveKeyframe(p, clip.id, index, origin + dx / useStore.getState().pxPerSec));
+    const moved = edit.getClip(useStore.getState().project, clip.id)?.keyframes?.[index];
+    if (moved) store.setPlayhead(clip.start + moved.time);
+  });
+}
+
 const ClipView = memo(function ClipView({
   clip, selected, pxPerSec, laneH, locked, onPointerDown,
 }: {
@@ -211,6 +232,17 @@ const ClipView = memo(function ClipView({
       )}
       {clip.fadeIn > 0 && <div className="fade fade-in" style={{ width: clip.fadeIn * pxPerSec }} />}
       {clip.fadeOut > 0 && <div className="fade fade-out" style={{ width: clip.fadeOut * pxPerSec }} />}
+      {!locked && clip.keyframes?.map((k, index) =>
+        k.time < 0 || k.time > clip.duration ? null : (
+          <div
+            key={index}
+            className="kf"
+            style={{ left: k.time * pxPerSec }}
+            title="Keyframe: click to jump here, drag to retime"
+            onPointerDown={(e) => onKeyframeDown(e, clip, index)}
+          />
+        ),
+      )}
       <span className="clip-label">
         {label}
         {clip.speed !== 1 && <em> {clip.speed}×</em>}

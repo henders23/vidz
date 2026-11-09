@@ -1,6 +1,6 @@
 /** Frame compositor shared by the live preview and the exporter. */
 import { Clip, Project } from '../types';
-import { RenderItem, fadeFactor, getMedia, renderItems, zoomTransform } from './edit';
+import { RenderItem, fadeFactor, getMedia, renderItems, resolveClip, zoomTransform } from './edit';
 
 export type SourceLookup = (clip: Clip) => CanvasImageSource | null;
 
@@ -236,8 +236,9 @@ export function drawFrame(ctx: Ctx, project: Project, time: number, lookup: Sour
   ctx.rect(0, 0, project.width, project.height);
   ctx.clip();
   for (const item of renderItems(project, time)) {
-    const { clip } = item;
-    if (clip.type === 'zoom') continue; // applied to the layers beneath via zoomTransform
+    if (item.clip.type === 'zoom') continue; // applied to the layers beneath via zoomTransform
+    // Apply keyframed motion. A held clip stays where its animation left it.
+    const clip = resolveClip(item.clip, item.clip.start + item.localTime);
     ctx.save();
     const view = zoomTransform(project, time, clip.trackId, options.bypassZoomId);
     ctx.translate(view.tx, view.ty);
@@ -255,7 +256,7 @@ export function drawFrame(ctx: Ctx, project: Project, time: number, lookup: Sour
         if (clip.type === 'text' && clip.text) drawText(ctx, clip);
         else if (clip.type === 'shape' && clip.shape) drawShape(ctx, clip, item.localTime);
         else {
-          const source = lookup(clip);
+          const source = lookup(item.clip);
           if (source) {
             const { width, height } = clipSize(clip, project);
             try {

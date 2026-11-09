@@ -204,7 +204,14 @@ export const commands: Command[] = [
     title: 'Update clip properties',
     description: 'Patch any clip properties (x, y, scale, rotation, opacity, volume, fadeIn, fadeOut, filters, text, shape, effect).',
     params: { type: 'object', properties: { clipId: str, patch: { type: 'object' } }, required: ['clipId', 'patch'] },
-    run: ({ clipId, patch }) => s().commit((p) => edit.updateClip(p, String(clipId), patch as Partial<Clip>)),
+    run: ({ clipId, patch }) =>
+      s().commit((p) => {
+        // On an animated clip, transform changes must land in a keyframe or they would be ignored.
+        const { x, y, scale, rotation, opacity, ...rest } = patch as Partial<Clip>;
+        const transform = Object.fromEntries(Object.entries({ x, y, scale, rotation, opacity }).filter(([, v]) => v !== undefined));
+        const updated = edit.updateClip(p, String(clipId), rest);
+        return Object.keys(transform).length ? edit.applyTransform(updated, String(clipId), s().playhead, transform) : updated;
+      }),
   },
   {
     id: 'clip.move',
@@ -233,6 +240,41 @@ export const commands: Command[] = [
     description: 'Change the playback speed of a video or audio clip (0.1 - 8).',
     params: { type: 'object', properties: { clipId: str, speed: num }, required: ['clipId', 'speed'] },
     run: ({ clipId, speed }) => s().commit((p) => edit.setClipSpeed(p, String(clipId), Number(speed))),
+  },
+  {
+    id: 'clip.addKeyframe',
+    title: 'Add keyframe',
+    description: 'Add a keyframe to the selected clip at the playhead, to start animating its position, size, rotation or opacity.',
+    shortcut: 'K',
+    run: () => {
+      const { project, selection, playhead } = s();
+      const clip = selection.length === 1 ? edit.getClip(project, selection[0]) : undefined;
+      if (!clip || clip.type === 'audio') return { message: 'Select a clip to animate first' };
+      if (playhead < clip.start || playhead > clipEnd(clip)) return { message: 'Move the playhead onto the clip to add a keyframe there' };
+      s().commit((p) => edit.setKeyframe(p, clip.id, playhead));
+      s().setPanel('properties');
+      return { message: 'Keyframe added. Move the playhead, then move or resize the clip to animate it.' };
+    },
+  },
+  {
+    id: 'clip.setKeyframes',
+    title: 'Set clip animation',
+    description:
+      'Replace a clip\'s keyframes so it moves, resizes, rotates or fades over time, for example to keep a blur or spotlight on a moving target, pan a zoom, or slide a title in. Each keyframe gives a timeline time in seconds plus any of x, y (offset from canvas centre in pixels), scale, rotation, opacity, and width/height for effect regions and shapes; omitted properties keep the clip\'s current value. Pass an empty array to remove the animation.',
+    params: {
+      type: 'object',
+      properties: {
+        clipId: str,
+        keyframes: {
+          type: 'array',
+          items: { type: 'object', properties: { time: num, x: num, y: num, scale: num, rotation: num, opacity: num, width: num, height: num }, required: ['time'] },
+        },
+        motion: { enum: ['smooth', 'linear'], description: 'smooth (default) flows through the keyframes; linear moves at constant speed between them, which suits tracking.' },
+      },
+      required: ['clipId', 'keyframes'],
+    },
+    run: ({ clipId, keyframes, motion }) =>
+      s().commit((p) => edit.setKeyframes(p, String(clipId), keyframes as { time: number }[], motion as Clip['motion'])),
   },
   {
     id: 'clip.setTransition',

@@ -279,6 +279,11 @@ kbd {
   background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0 4px, rgba(255, 255, 255, 0.15) 4px 8px);
   border-right: 1px solid rgba(255, 255, 255, 0.7);
 }
+.kf {
+  position: absolute; bottom: 5px; width: 10px; height: 10px; margin-left: -5px; background: #fff; border: 1.5px solid #111;
+  transform: rotate(45deg); cursor: ew-resize; z-index: 1; touch-action: none;
+}
+.kf:hover { background: #ffd23d; }
 .trim { position: absolute; top: 0; bottom: 0; width: 9px; cursor: ew-resize; touch-action: none; }
 .trim-start { left: 0; }
 .trim-end { right: 0; }
@@ -382,3 +387,9 @@ kbd {
 .settings small { color: var(--muted); font-weight: 400; }
 .settings input, .settings select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-weight: 400; width: 100%; min-width: 0; }
 .key-row { display: flex; gap: 6px; align-items: center; }
+
+.icon-btn.boxed { border: 1px solid var(--border); width: 26px; height: 26px; }
+.insp-buttons { align-items: center; }
+.kf-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.kf-chips button { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; font: 11px ui-monospace, 'SF Mono', Consolas, monospace; color: var(--muted); }
+.kf-chips button.on { border-color: var(--accent); color: var(--text); background: #1b1830; }

@@ -12,9 +12,10 @@ import { formatTime, startDrag } from '../lib/util';
 /** Top-most visual clip under a canvas-space point. */
 function hitTest(project: Project, time: number, sx: number, sy: number, bypass?: string): Clip | null {
   const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id));
-  for (const clip of edit.visibleClips(project, time).reverse()) {
+  for (const raw of edit.visibleClips(project, time).reverse()) {
     // Zoom clips cover the whole frame, so they are selected from the timeline instead.
-    if (locked.has(clip.trackId) || clip.type === 'zoom') continue;
+    if (locked.has(raw.trackId) || raw.type === 'zoom') continue;
+    const clip = edit.resolveClip(raw, time);
     const { width, height } = clipSize(clip, project);
     // Undo any zoom above this clip to get from on-screen to canvas coordinates.
     const view = edit.zoomTransform(project, time, clip.trackId, bypass);
@@ -23,7 +24,7 @@ function hitTest(project: Project, time: number, sx: number, sy: number, bypass?
     const a = (-clip.rotation * Math.PI) / 180;
     const lx = (dx * Math.cos(a) - dy * Math.sin(a)) / clip.scale;
     const ly = (dx * Math.sin(a) + dy * Math.cos(a)) / clip.scale;
-    if (Math.abs(lx) <= width / 2 && Math.abs(ly) <= height / 2) return clip;
+    if (Math.abs(lx) <= width / 2 && Math.abs(ly) <= height / 2) return raw;
   }
   return null;
 }
@@ -82,11 +83,13 @@ export function Preview() {
   const showBox =
     selected && selected.type !== 'audio' && playhead >= selected.start && playhead < selected.start + selected.duration &&
     !(selected.type === 'zoom' && playing);
-  const size = showBox ? clipSize(selected, project) : null;
+  // The selected clip as it looks right now (keyframed motion applied).
+  const now = showBox ? edit.resolveClip(selected, playhead) : undefined;
+  const size = now ? clipSize(now, project) : null;
   const bypass = editingZoomId(project, selection, playing);
   // How zooms above the selected clip move and scale it on screen.
   const view = showBox ? edit.zoomTransform(project, playhead, selected.trackId, bypass) : { k: 1, tx: 0, ty: 0 };
-  const shown = showBox && selected.type === 'zoom' ? { ...selected, ...edit.zoomCentre(selected, project) } : selected;
+  const shown = now && now.type === 'zoom' ? { ...now, ...edit.zoomCentre(now, project) } : now;
 
   const toCanvas = (e: { clientX: number; clientY: number }) => {
     const r = canvasRef.current!.getBoundingClientRect();
@@ -104,11 +107,14 @@ export function Preview() {
     beginMove(e, clip);
   };
 
-  const beginMove = (e: React.PointerEvent, clip: Clip) => {
+  const beginMove = (e: React.PointerEvent, raw: Clip) => {
     const store = useStore.getState();
+    const time = store.playhead;
+    const clip = edit.resolveClip(raw, time);
     const zoomK = edit.zoomTransform(store.project, store.playhead, clip.trackId, editingZoomId(store.project, [clip.id], false)).k;
     let started = false;
-    const snapDist = 10 / k;
+    // Centre snapping would fight precise placement when following a moving target.
+    const snapDist = edit.isAnimated(raw) ? 0 : 10 / k;
     startDrag(
       e,
       (dx, dy, ev) => {
@@ -124,7 +130,8 @@ export function Preview() {
         if (snapX) x = 0;
         if (snapY) y = 0;
         setGuides({ x: snapX, y: snapY });
-        store.mutate((p) => edit.updateClip(p, clip.id, { x, y }));
+        // On an animated clip this adds or updates a keyframe at the playhead.
+        store.mutate((p) => edit.applyTransform(p, clip.id, time, { x, y }));
       },
       () => setGuides({ x: false, y: false }),
     );
@@ -134,7 +141,8 @@ export function Preview() {
     if (!selected || !shown) return;
     e.stopPropagation();
     const store = useStore.getState();
-    const clip = selected;
+    const time = store.playhead;
+    const clip = shown;
     // Work in on-screen canvas pixels, where the box centre sits after any zoom above the clip.
     const centre = { x: view.tx + view.k * (project.width / 2 + shown.x), y: view.ty + view.k * (project.height / 2 + shown.y) };
     const start = toCanvas(e);
@@ -155,12 +163,12 @@ export function Preview() {
         const unit = view.k * clip.scale;
         const width = Math.max(8, (Math.abs(dx * Math.cos(angle) - dy * Math.sin(angle)) * 2) / unit);
         const height = Math.max(8, (Math.abs(dx * Math.sin(angle) + dy * Math.cos(angle)) * 2) / unit);
-        store.mutate((p) => edit.updateClip(p, clip.id, { [box]: { ...clip[box]!, width, height } }));
+        store.mutate((p) => edit.applyTransform(p, clip.id, time, { width, height }));
         return;
       }
       let scale = Math.max(0.02, (clip.scale * Math.hypot(dx, dy)) / d0);
       if (clip.type === 'zoom') scale = Math.min(1, Math.max(0.1, scale));
-      store.mutate((p) => edit.updateClip(p, clip.id, { scale }));
+      store.mutate((p) => edit.applyTransform(p, clip.id, time, { scale }));
     });
   };
 
@@ -181,7 +189,7 @@ export function Preview() {
                 height: size.height * shown.scale * view.k * k,
                 left: (view.tx + view.k * (project.width / 2 + shown.x)) * k,
                 top: (view.ty + view.k * (project.height / 2 + shown.y)) * k,
-                transform: `translate(-50%, -50%) rotate(${selected.type === 'zoom' ? 0 : selected.rotation}deg)`,
+                transform: `translate(-50%, -50%) rotate(${shown.type === 'zoom' ? 0 : shown.rotation}deg)`,
               }}
               onPointerDown={selected.type === 'zoom' ? (e) => { e.stopPropagation(); beginMove(e, selected); } : undefined}
             >

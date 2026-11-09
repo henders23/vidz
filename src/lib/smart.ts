@@ -73,6 +73,11 @@ function summariseClip(c: Clip) {
   if (c.shape) out.shape = c.shape.kind;
   if (c.effect) out.effect = c.effect;
   if (c.transition) out.transition = c.transition;
+  if (c.keyframes?.length) {
+    // Reported in timeline seconds, the same form clip_setKeyframes takes.
+    out.keyframes = c.keyframes.map(({ time, ...v }) => ({ time: round(c.start + time), ...Object.fromEntries(Object.entries(v).filter(([, n]) => n !== undefined).map(([k, n]) => [k, round(n as number)])) }));
+    out.motion = c.motion ?? 'smooth';
+  }
   return out;
 }
 

@@ -221,3 +221,89 @@ describe('AI-assisted editing primitives', () => {
     expect(edit.setCaptions(twice, []).clips.some((c) => c.caption)).toBe(false);
   });
 });
+
+describe('keyframed motion', () => {
+  const animated = () => {
+    const base = edit.addEffectClip(setup(), 'blur', { start: 10 }); // 10-15
+    let p = edit.setKeyframe(base.project, base.clipId, 10, { x: 0, y: 0 });
+    p = edit.setKeyframe(p, base.clipId, 12, { x: 200, y: 100, width: 300 });
+    p = edit.setKeyframe(p, base.clipId, 14, { x: 400, y: 0 });
+    return { p, id: base.clipId };
+  };
+  const at = (p: Project, id: string, t: number) => edit.resolveClip(edit.getClip(p, id)!, t);
+
+  it('passes through every keyframe and holds outside them', () => {
+    const { p, id } = animated();
+    expect(at(p, id, 10)).toMatchObject({ x: 0, y: 0 });
+    expect(at(p, id, 12)).toMatchObject({ x: 200, y: 100 });
+    expect(at(p, id, 12).effect!.width).toBe(300);
+    expect(at(p, id, 14.9)).toMatchObject({ x: 400, y: 0 });
+    // Smooth motion keeps moving through the middle keyframe; linear is exactly proportional.
+    const mid = at(p, id, 11).x;
+    expect(mid).toBeGreaterThan(0);
+    expect(mid).toBeLessThan(200);
+    const linear = edit.updateClip(p, id, { motion: 'linear' });
+    expect(at(linear, id, 11)).toMatchObject({ x: 100, y: 50 });
+    expect(at(linear, id, 13).x).toBeCloseTo(300);
+    // A still clip is returned untouched.
+    const still = edit.addTextClip(setup(), { start: 0 });
+    expect(edit.resolveClip(still.project.clips[0], 1)).toBe(still.project.clips[0]);
+  });
+
+  it('auto-keys edits on an animated clip and plainly updates a still one', () => {
+    const { p, id } = animated();
+    const edited = edit.applyTransform(p, id, 13, { y: -50 });
+    expect(edit.getClip(edited, id)!.keyframes).toHaveLength(4);
+    expect(at(edited, id, 13).y).toBe(-50);
+    // Editing on an existing keyframe updates it instead of adding another.
+    expect(edit.getClip(edit.applyTransform(p, id, 12.005, { y: 7 }), id)!.keyframes).toHaveLength(3);
+    const still = edit.addEffectClip(setup(), 'blur', { start: 0 });
+    const moved = edit.applyTransform(still.project, still.clipId, 1, { x: 30, width: 99 });
+    expect(edit.getClip(moved, still.clipId)!.x).toBe(30);
+    expect(edit.getClip(moved, still.clipId)!.keyframes).toBeUndefined();
+    expect(edit.getClip(moved, still.clipId)!.effect!.width).toBe(99);
+  });
+
+  it('keeps animation at the same timeline moments through trim, split and ripple cut', () => {
+    const { p, id } = animated();
+    const linear = edit.updateClip(p, id, { motion: 'linear' });
+    const trimmed = edit.trimClip(linear, id, 'start', 11);
+    expect(at(trimmed, id, 12)).toMatchObject({ x: 200, y: 100 });
+    expect(at(trimmed, id, 11).x).toBeCloseTo(100);
+    const split = edit.splitClip(linear, id, 13);
+    const second = split.clips.find((c) => c.type === 'effect' && c.start === 13)!;
+    expect(edit.resolveClip(second, 13).x).toBeCloseTo(300);
+    expect(edit.resolveClip(second, 14).x).toBeCloseTo(400);
+    expect(at(split, id, 12).x).toBe(200);
+    const cut = edit.rippleCut(linear, [{ start: 11, end: 12 }]);
+    const right = cut.clips.find((c) => c.type === 'effect' && Math.abs(c.start - 11) < 1e-6)!;
+    expect(edit.resolveClip(right, 11).x).toBeCloseTo(200);
+    expect(edit.resolveClip(right, 13).x).toBeCloseTo(400);
+  });
+
+  it('removes, retimes and clears keyframes', () => {
+    const { p, id } = animated();
+    const moved = edit.moveKeyframe(p, id, 1, 99); // cannot pass the next keyframe
+    expect(edit.getClip(moved, id)!.keyframes![1].time).toBeCloseTo(4 - 1 / 30);
+    expect(edit.getClip(edit.removeKeyframe(p, id, 1), id)!.keyframes).toHaveLength(2);
+    const cleared = edit.clearKeyframes(p, id, 12);
+    expect(edit.getClip(cleared, id)).toMatchObject({ x: 200, y: 100, keyframes: undefined });
+    expect(edit.getClip(cleared, id)!.effect!.width).toBe(300);
+    const replaced = edit.setKeyframes(p, id, [{ time: 14, x: 5 }, { time: 10, x: 1 }], 'linear');
+    expect(edit.getClip(replaced, id)!.keyframes!.map((k) => [k.time, k.x])).toEqual([[0, 1], [4, 5]]);
+    expect(edit.getClip(edit.setKeyframes(p, id, []), id)!.keyframes).toBeUndefined();
+  });
+
+  it('pans a zoom between keyframed areas', () => {
+    const v = add(setup(), 'v', 0);
+    const z = edit.addZoomClip(v.p, { start: 0 }); // 0-4, eases 0.6s
+    let p = edit.updateClip(z.project, z.clipId, { motion: 'linear' });
+    p = edit.setKeyframe(p, z.clipId, 1, { x: -480, y: 0, scale: 0.5 });
+    p = edit.setKeyframe(p, z.clipId, 3, { x: 480, y: 0, scale: 0.5 });
+    const below = edit.getClip(p, v.id)!.trackId;
+    const centreX = (t: number) => { const view = edit.zoomTransform(p, t, below); return (960 - view.tx) / view.k - 960; };
+    expect(centreX(1)).toBeCloseTo(-480);
+    expect(centreX(2)).toBeCloseTo(0);
+    expect(centreX(3)).toBeCloseTo(480);
+  });
+});

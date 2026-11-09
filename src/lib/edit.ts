@@ -4,7 +4,7 @@
  * and safe to call from automation (the command layer / future AI editing).
  */
 import {
-  TimeRange, TimelineWord, Word, hasSound,
+  Keyframe, KeyframeValues, TimeRange, TimelineWord, Word, hasSound,
   Clip, ClipType, EffectKind, MediaAsset, Project, ShapeKind, Track, TrackKind, Transition, TransitionType, canTransition, clipEnd,
   isOverlay, isVisual,
 } from '../types';
@@ -246,6 +246,7 @@ export function trimClip(p: Project, id: string, edge: 'start' | 'end', time: nu
     return updateClip(p, id, {
       start,
       duration: end - start,
+      keyframes: shiftKeyframes(clip, start - clip.start),
       offset: isTimed ? Math.max(0, clip.offset + (start - clip.start) * clip.speed) : 0,
     });
   }
@@ -268,6 +269,7 @@ export function splitClip(p: Project, id: string, time: number): Project {
     offset: clip.type === 'video' || clip.type === 'audio' ? clip.offset + firstDuration * clip.speed : 0,
     fadeIn: 0,
     transition: undefined,
+    keyframes: shiftKeyframes(clip, firstDuration),
   };
   return { ...p, clips: p.clips.flatMap((c) => (c.id === id ? [first, second] : [c])) };
 }
@@ -309,7 +311,9 @@ export function setClipSpeed(p: Project, id: string, speed: number): Project {
   const sourceSpan = clip.duration * clip.speed;
   const next = Math.min(Infinity, ...trackClips(p, clip.trackId, id).filter((c) => c.start >= clip.start).map((c) => c.start));
   const duration = Math.max(MIN_CLIP, Math.min(sourceSpan / speed, next - clip.start));
-  return updateClip(p, id, { speed, duration });
+  // Keep the animation locked to the footage: keyframe times stretch with the clip.
+  const keyframes = clip.keyframes?.map((k) => ({ ...k, time: (k.time * clip.speed) / speed }));
+  return updateClip(p, id, { speed, duration, keyframes });
 }
 
 export function removeMedia(p: Project, mediaId: string): Project {
@@ -408,8 +412,9 @@ export function zoomTransform(p: Project, time: number, trackId: string, bypassI
     for (const clip of p.clips) {
       if (clip.type !== 'zoom' || clip.trackId !== track.id || clip.id === bypassId || time < clip.start || time >= clipEnd(clip)) continue;
       const progress = ease(fadeFactor(clip, time));
-      const centre = zoomCentre(clip, p);
-      const size = 1 + (clamp(clip.scale, 0.05, 1) - 1) * progress;
+      const now = resolveClip(clip, time);
+      const centre = zoomCentre(now, p);
+      const size = 1 + (clamp(now.scale, 0.05, 1) - 1) * progress;
       const kz = 1 / size;
       // screen = kz * (pt - (canvasCentre + focus)) + canvasCentre, composed onto the zooms above.
       const tzx = cx - kz * (cx + centre.x * progress);
@@ -463,6 +468,7 @@ export function rippleCut(p: Project, ranges: TimeRange[]): Project {
           offset: timed ? clip.offset + (b - clip.start) * clip.speed : 0,
           fadeIn: 0,
           transition: undefined,
+          keyframes: shiftKeyframes(clip, b - clip.start),
         });
       }
       return parts;
@@ -628,4 +634,141 @@ export function styleCaptions(p: Project, patch: { y?: number; text?: Partial<No
       c.caption && c.text ? { ...c, y: patch.y ?? c.y, text: { ...c.text, ...patch.text, content: c.text.content } } : c,
     ),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Keyframed motion
+// ---------------------------------------------------------------------------
+
+const KEYFRAME_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity', 'width', 'height'] as const;
+
+/** Move keyframes so they stay at the same timeline moment when a clip's start moves forward by `delta`. */
+function shiftKeyframes(clip: Clip, delta: number): Keyframe[] | undefined {
+  return clip.keyframes?.map((k) => ({ ...k, time: k.time - delta }));
+}
+
+/** The clip's own (un-animated) values. */
+export function baseValues(clip: Clip): KeyframeValues {
+  const box = clip.effect ?? clip.shape;
+  return { x: clip.x, y: clip.y, scale: clip.scale, rotation: clip.rotation, opacity: clip.opacity, width: box?.width, height: box?.height };
+}
+
+/** Clip fields that hold a set of values when the clip is not animated. */
+function toClipPatch(clip: Clip, v: Partial<KeyframeValues>): Partial<Clip> {
+  const { width, height, ...rest } = v;
+  const patch: Partial<Clip> = { ...rest };
+  if (width !== undefined || height !== undefined) {
+    if (clip.effect) patch.effect = { ...clip.effect, width: width ?? clip.effect.width, height: height ?? clip.effect.height };
+    if (clip.shape) patch.shape = { ...clip.shape, width: width ?? clip.shape.width, height: height ?? clip.shape.height };
+  }
+  return patch;
+}
+
+/** Animated values `local` seconds into the clip. Holds the first/last keyframe outside their range. */
+export function valuesAt(clip: Clip, local: number): KeyframeValues {
+  const kfs = clip.keyframes;
+  const base = baseValues(clip);
+  if (!kfs?.length) return base;
+  const first = kfs[0];
+  const last = kfs[kfs.length - 1];
+  if (local <= first.time) return { ...base, ...first };
+  if (local >= last.time) return { ...base, ...last };
+  let i = 0;
+  while (kfs[i + 1].time <= local) i++;
+  const a = kfs[i];
+  const b = kfs[i + 1];
+  const span = b.time - a.time;
+  const u = span > 0 ? (local - a.time) / span : 1;
+  const out = { ...base };
+  for (const prop of KEYFRAME_PROPS) {
+    const p0 = a[prop] ?? base[prop];
+    const p1 = b[prop] ?? base[prop];
+    if (p0 === undefined || p1 === undefined) continue;
+    let value: number;
+    if (clip.motion === 'linear') {
+      value = p0 + (p1 - p0) * u;
+    } else {
+      // Cubic Hermite: flows through the middle keyframes and eases out of the first and into the last.
+      const before = kfs[i - 1];
+      const after = kfs[i + 2];
+      const m0 = before ? (p1 - (before[prop] ?? p0)) / (b.time - before.time) : 0;
+      const m1 = after ? ((after[prop] ?? p1) - p0) / (after.time - a.time) : 0;
+      const u2 = u * u;
+      const u3 = u2 * u;
+      value = (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * span * m0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * span * m1;
+    }
+    out[prop] = value;
+  }
+  out.opacity = clamp(out.opacity, 0, 1);
+  out.scale = Math.max(0.01, out.scale);
+  if (out.width !== undefined) out.width = Math.max(1, out.width);
+  if (out.height !== undefined) out.height = Math.max(1, out.height);
+  return out;
+}
+
+/** The clip as it should be drawn at a timeline time, with any animation applied. */
+export function resolveClip(clip: Clip, time: number): Clip {
+  if (!clip.keyframes?.length) return clip;
+  return { ...clip, ...toClipPatch(clip, valuesAt(clip, time - clip.start)) };
+}
+
+export const isAnimated = (clip: Clip) => !!clip.keyframes?.length;
+
+/** Add a keyframe at a timeline time, or update the one already there (within half a frame). */
+export function setKeyframe(p: Project, id: string, time: number, patch: Partial<KeyframeValues> = {}): Project {
+  const clip = getClip(p, id);
+  if (!clip || clip.type === 'audio') return p;
+  const local = clamp(time - clip.start, 0, clip.duration);
+  const existing = clip.keyframes ?? [];
+  const at = existing.findIndex((k) => Math.abs(k.time - local) <= 0.5 / p.fps);
+  const keyframe: Keyframe = { ...valuesAt(clip, local), ...patch, time: at >= 0 ? existing[at].time : local };
+  const keyframes = (at >= 0 ? existing.map((k, i) => (i === at ? keyframe : k)) : [...existing, keyframe]).sort((a, b) => a.time - b.time);
+  return updateClip(p, id, { keyframes });
+}
+
+/**
+ * Change a clip's position / size / rotation / opacity as the user sees it at `time`.
+ * A still clip is simply updated; an animated clip gets (or updates) a keyframe there.
+ */
+export function applyTransform(p: Project, id: string, time: number, patch: Partial<KeyframeValues>): Project {
+  const clip = getClip(p, id);
+  if (!clip) return p;
+  return isAnimated(clip) ? setKeyframe(p, id, time, patch) : updateClip(p, id, toClipPatch(clip, patch));
+}
+
+/** Stop animating, keeping the clip as it looks at `time`. */
+export function clearKeyframes(p: Project, id: string, time: number): Project {
+  const clip = getClip(p, id);
+  if (!clip || !isAnimated(clip)) return p;
+  return updateClip(p, id, { ...toClipPatch(clip, valuesAt(clip, time - clip.start)), keyframes: undefined });
+}
+
+export function removeKeyframe(p: Project, id: string, index: number): Project {
+  const clip = getClip(p, id);
+  if (!clip?.keyframes?.[index]) return p;
+  if (clip.keyframes.length === 1) return clearKeyframes(p, id, clip.start + clip.keyframes[0].time);
+  return updateClip(p, id, { keyframes: clip.keyframes.filter((_, i) => i !== index) });
+}
+
+/** Retime one keyframe (timeline seconds), keeping it between its neighbours and inside the clip. */
+export function moveKeyframe(p: Project, id: string, index: number, time: number): Project {
+  const clip = getClip(p, id);
+  const kfs = clip?.keyframes;
+  if (!clip || !kfs?.[index]) return p;
+  const gap = 1 / p.fps;
+  const min = Math.max(0, index > 0 ? kfs[index - 1].time + gap : 0);
+  const max = Math.min(clip.duration, index < kfs.length - 1 ? kfs[index + 1].time - gap : clip.duration);
+  if (max < min) return p;
+  return updateClip(p, id, { keyframes: kfs.map((k, i) => (i === index ? { ...k, time: clamp(time - clip.start, min, max) } : k)) });
+}
+
+/** Replace a clip's whole animation. Times are timeline seconds; omitted properties keep the clip's current values. */
+export function setKeyframes(p: Project, id: string, keyframes: (Partial<KeyframeValues> & { time: number })[], motion?: Clip['motion']): Project {
+  const clip = getClip(p, id);
+  if (!clip || clip.type === 'audio') return p;
+  const base = baseValues(clip);
+  const built = keyframes
+    .map((k) => ({ ...base, ...k, time: clamp(k.time - clip.start, 0, clip.duration) }))
+    .sort((a, b) => a.time - b.time);
+  return updateClip(p, id, { keyframes: built.length ? built : undefined, motion: motion ?? clip.motion });
 }
