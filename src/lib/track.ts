@@ -32,7 +32,7 @@ interface Template {
   stepY: number;
 }
 
-const MAX_SAMPLES = 1600;
+const MAX_SAMPLES = 1024;
 const LOST_BELOW = 0.45;
 /** While the target still looks this much like it did at the start, trust that original picture. */
 const ANCHOR_ABOVE = 0.6;
@@ -101,26 +101,35 @@ function correlation(a: Float32Array, b: Float32Array): number {
 /** Best match for the template within `radius` pixels of (cx, cy), refined to sub-pixel precision. */
 export function match(gray: Gray, template: Template, cx: number, cy: number, radius: number): { x: number; y: number; score: number } {
   const size = 2 * radius + 1;
-  const scores = new Float32Array(size * size).fill(-1);
+  const scores = new Float32Array(size * size).fill(NaN);
   const patch = new Float32Array(template.samples.length);
   let best = -1;
   let bx = 0;
   let by = 0;
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
+  const score = (dx: number, dy: number): number => {
+    const index = (dy + radius) * size + dx + radius;
+    if (Number.isNaN(scores[index])) {
       sample(gray, cx + dx, cy + dy, template, patch);
-      const score = correlation(template.samples, patch);
-      scores[(dy + radius) * size + dx + radius] = score;
-      if (score > best) {
-        best = score;
-        bx = dx;
-        by = dy;
-      }
+      scores[index] = correlation(template.samples, patch);
     }
-  }
+    return scores[index];
+  };
+  const consider = (dx: number, dy: number) => {
+    if (Math.abs(dx) > radius || Math.abs(dy) > radius) return;
+    const value = score(dx, dy);
+    if (value > best) {
+      best = value;
+      bx = dx;
+      by = dy;
+    }
+  };
+  // Coarse pass over every other position, then a fine pass around the best one found.
+  for (let dy = -radius; dy <= radius; dy += 2) for (let dx = -radius; dx <= radius; dx += 2) consider(dx, dy);
+  const coarseX = bx;
+  const coarseY = by;
+  for (let dy = coarseY - 2; dy <= coarseY + 2; dy++) for (let dx = coarseX - 2; dx <= coarseX + 2; dx++) consider(dx, dy);
   // Fit a parabola through the best score and its neighbours for a position between pixels.
-  const at = (dx: number, dy: number) =>
-    Math.abs(dx) > radius || Math.abs(dy) > radius ? best : scores[(dy + radius) * size + dx + radius];
+  const at = (dx: number, dy: number) => (Math.abs(dx) > radius || Math.abs(dy) > radius ? best : score(dx, dy));
   const refine = (lo: number, hi: number) => {
     const curve = lo - 2 * best + hi;
     return curve < -1e-6 ? Math.max(-0.5, Math.min(0.5, (0.5 * (lo - hi)) / curve)) : 0;

@@ -45,7 +45,7 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 | `src/lib/commands.ts` | Named commands with descriptions and JSON-schema parameters. Shortcuts, the palette and `window.vidz` all go through here. |
 | `src/lib/render.ts` | Frame compositor shared by preview and export, so what you see is what you get. |
 | `src/lib/playback.ts` | Preview engine: the playhead is the master clock, media elements follow it. |
-| `src/lib/export.ts` | Offline render via WebCodecs + [mediabunny](https://mediabunny.dev), audio mixed with `OfflineAudioContext`. |
+| `src/lib/export.ts` | Offline render: frames are decoded and encoded with WebCodecs via [mediabunny](https://mediabunny.dev) (falling back to seeking a `<video>` element for files it cannot decode), audio mixed with `OfflineAudioContext`. |
 | `src/lib/media.ts` | Import, probing, thumbnails, waveform peaks, IndexedDB storage. |
 | `src/lib/recorder.ts` | Screen / camera / microphone capture. |
 | `src/lib/ai.ts` | The assistant: a streaming Claude tool-use loop whose tools are generated from the command registry. |
@@ -86,4 +86,4 @@ for hosting vidz publicly with a shared key.
 
 1. Automatic cursor effects, and tracking that also follows changes in size.
 2. Speaker labels and faster transcription on WebGPU.
-3. Faster export (WebCodecs decoding instead of per-frame seeking), multiple projects, optional desktop build.
+3. Multiple projects and an optional desktop build.

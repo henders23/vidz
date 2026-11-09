@@ -1,14 +1,19 @@
 /** Offline, frame-accurate export using WebCodecs (via mediabunny) and an offline audio mix. */
 import {
+  ALL_FORMATS,
   AudioBufferSource,
+  BlobSource,
   BufferTarget,
+  CanvasSink,
   CanvasSource,
+  Input,
   Mp4OutputFormat,
   Output,
   QUALITY_HIGH,
   QUALITY_MEDIUM,
   QUALITY_VERY_HIGH,
   WebMOutputFormat,
+  type WrappedCanvas,
   getFirstEncodableAudioCodec,
   getFirstEncodableVideoCodec,
 } from 'mediabunny';
@@ -77,14 +82,78 @@ async function mixAudio(project: Project, runtime: Record<string, MediaRuntime>,
  */
 export const FRAME_BIAS = 0.002;
 
-/** Owns the decode elements used during export, independent of the live preview. */
+/**
+ * Reads frames from a video file by decoding it directly (WebCodecs), which is
+ * several times faster than seeking a <video> element when frames are requested
+ * in order, as export and tracking do.
+ */
+class VideoReader {
+  private iterator: AsyncGenerator<WrappedCanvas, void, unknown> | null = null;
+  private current: WrappedCanvas | null = null;
+  /** The frame after `current`: undefined = not fetched yet, null = end of file. */
+  private next: WrappedCanvas | null | undefined;
+
+  private constructor(private input: Input, private sink: CanvasSink) {}
+
+  /** Returns null when this browser cannot decode the file this way. */
+  static async open(blob: Blob): Promise<VideoReader | null> {
+    const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
+    try {
+      const track = await input.getPrimaryVideoTrack();
+      if (!track || !(await track.canDecode())) {
+        input.dispose();
+        return null;
+      }
+      // Three pooled canvases: the current frame, the look-ahead frame, and one being written.
+      return new VideoReader(input, new CanvasSink(track, { poolSize: 3 }));
+    } catch {
+      input.dispose();
+      return null;
+    }
+  }
+
+  /** The frame showing at `time` (the last one that starts at or before it). */
+  async frameAt(time: number): Promise<CanvasImageSource | null> {
+    const backwards = this.current !== null && time < this.current.timestamp;
+    const farAhead = this.current !== null && time > this.current.timestamp + 3;
+    if (!this.iterator || backwards || farAhead) {
+      await this.iterator?.return();
+      this.iterator = this.sink.canvases(Math.max(0, time));
+      this.current = null;
+      this.next = undefined;
+    }
+    while (this.next === undefined || (this.next !== null && this.next.timestamp <= time)) {
+      if (this.next) this.current = this.next;
+      const result = await this.iterator.next();
+      this.next = result.done ? null : result.value;
+    }
+    return (this.current ?? this.next)?.canvas ?? null;
+  }
+
+  dispose() {
+    void this.iterator?.return();
+    this.input.dispose();
+  }
+}
+
+/** Supplies the picture for each clip at a given time, independent of the live preview. */
 export class FrameSources {
+  private readers = new Map<string, VideoReader>();
+  private frames = new Map<string, CanvasImageSource>();
   private videos = new Map<string, HTMLVideoElement>();
   private images = new Map<string, ImageBitmap>();
+  /** Clips whose file could not be decoded directly; these use a <video> element instead. */
+  private slowPath = new Set<string>();
   constructor(private project: Project, private runtime: Record<string, MediaRuntime>) {}
 
   async prepare(items: RenderItem[]) {
     const active = new Set(items.map((i) => i.clip.id));
+    for (const [id, reader] of this.readers) {
+      if (active.has(id)) continue;
+      reader.dispose();
+      this.readers.delete(id);
+      this.frames.delete(id);
+    }
     for (const [id, el] of this.videos) {
       if (active.has(id)) continue;
       el.removeAttribute('src');
@@ -97,29 +166,64 @@ export class FrameSources {
       if (clip.type === 'image' && !this.images.has(clip.mediaId!)) {
         this.images.set(clip.mediaId!, await createImageBitmap(rt.blob));
       } else if (clip.type === 'video') {
-        let el = this.videos.get(clip.id);
-        if (!el) {
-          el = document.createElement('video');
-          el.muted = true;
-          el.preload = 'auto';
-          el.playsInline = true;
-          el.src = rt.url;
-          await new Promise<void>((resolve, reject) => {
-            el!.addEventListener('loadeddata', () => resolve(), { once: true });
-            el!.addEventListener('error', () => reject(new Error('A video clip could not be decoded')), { once: true });
-          });
-          this.videos.set(clip.id, el);
-        }
-        const length = getMedia(this.project, clip.mediaId)?.duration ?? el.duration;
-        await seekTo(el, clamp(clip.offset + localTime * clip.speed + FRAME_BIAS, 0, Math.max(0, length - 0.001)));
+        const length = getMedia(this.project, clip.mediaId)?.duration ?? Infinity;
+        const time = clamp(clip.offset + localTime * clip.speed + FRAME_BIAS, 0, Math.max(0, length - 0.001));
+        if (!(await this.decode(clip, rt, time))) await this.seek(clip, rt, time);
       }
     }
   }
 
+  /** Fast path. Returns false if this clip has to fall back to seeking. */
+  private async decode(clip: Clip, rt: MediaRuntime, time: number): Promise<boolean> {
+    if (this.slowPath.has(clip.id)) return false;
+    try {
+      let reader = this.readers.get(clip.id);
+      if (!reader) {
+        const opened = await VideoReader.open(rt.blob);
+        if (!opened) throw new Error('not decodable');
+        reader = opened;
+        this.readers.set(clip.id, reader);
+      }
+      const frame = await reader.frameAt(time);
+      if (!frame) throw new Error('no frame');
+      this.frames.set(clip.id, frame);
+      return true;
+    } catch {
+      this.readers.get(clip.id)?.dispose();
+      this.readers.delete(clip.id);
+      this.frames.delete(clip.id);
+      this.slowPath.add(clip.id);
+      return false;
+    }
+  }
+
+  private async seek(clip: Clip, rt: MediaRuntime, time: number) {
+    let el = this.videos.get(clip.id);
+    if (!el) {
+      el = document.createElement('video');
+      el.muted = true;
+      el.preload = 'auto';
+      el.playsInline = true;
+      el.src = rt.url;
+      await new Promise<void>((resolve, reject) => {
+        el!.addEventListener('loadeddata', () => resolve(), { once: true });
+        el!.addEventListener('error', () => reject(new Error('A video clip could not be decoded')), { once: true });
+      });
+      this.videos.set(clip.id, el);
+    }
+    await seekTo(el, time);
+  }
+
   lookup = (clip: Clip): CanvasImageSource | null =>
-    (clip.type === 'image' ? this.images.get(clip.mediaId!) : this.videos.get(clip.id)) ?? null;
+    (clip.type === 'image' ? this.images.get(clip.mediaId!) : this.frames.get(clip.id) ?? this.videos.get(clip.id)) ?? null;
+
+  /** How many video clips are being read through the slower <video> path. */
+  get fallbackCount() {
+    return this.slowPath.size;
+  }
 
   dispose() {
+    for (const reader of this.readers.values()) reader.dispose();
     for (const el of this.videos.values()) {
       el.removeAttribute('src');
       el.load();
