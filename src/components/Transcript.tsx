@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Captions, Scissors } from 'lucide-react';
+import { Captions, Download, Scissors } from 'lucide-react';
 import { useStore } from '../store';
 import * as edit from '../lib/edit';
 import { invokeCommand } from '../lib/commands';
@@ -64,6 +64,14 @@ export function Transcript() {
         <button className="btn small" disabled={busy || !words.length} onClick={() => invokeCommand('timeline.addCaptions')}><Captions size={13} /> Captions</button>
         <button className="btn small" disabled={!picked} title="Cut the selected words out of the video" onClick={cut}><Scissors size={13} /> Cut selection</button>
       </div>
+      {words.length > 0 && (
+        <div className="quick-actions export-row">
+          <span><Download size={13} /> Save as</span>
+          <button className="btn small" title="Captions file for YouTube, Vimeo and most players" onClick={() => invokeCommand('captions.exportSrt')}>SRT</button>
+          <button className="btn small" title="Captions file for web video players" onClick={() => invokeCommand('captions.exportVtt')}>VTT</button>
+          <button className="btn small" title="Plain text transcript" onClick={() => invokeCommand('captions.exportText')}>Text</button>
+        </div>
+      )}
       <TranscribeStatus />
       {words.length === 0 ? (
         <p className="insp-hint">

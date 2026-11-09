@@ -9,6 +9,8 @@ import * as edit from './edit';
 import { FrameSources } from './export';
 import { PEAKS_PER_SECOND } from './media';
 import { clipSize, drawFrame } from './render';
+import { toSrt, toText, toVtt } from './subtitles';
+import { downloadBlob } from './util';
 import { simplify, toGray, track } from './track';
 import { clipEnd } from '../types';
 
@@ -185,4 +187,24 @@ export async function trackClip(clipId: string, from?: number) {
     trackAbort = null;
     useStore.setState({ tracking: null });
   }
+}
+
+export type CaptionFormat = 'srt' | 'vtt' | 'txt';
+
+/**
+ * Download the captions as a file. Uses the caption clips on the timeline (so
+ * your edits to their wording and timing are included), or the transcript if
+ * captions have not been added.
+ */
+export function exportCaptions(format: CaptionFormat) {
+  const { project } = s();
+  const clips = project.clips.filter((c) => c.caption && c.text);
+  const lines = clips.length
+    ? clips.map((c) => ({ start: c.start, end: clipEnd(c), text: c.text!.content }))
+    : edit.captionLines(words());
+  if (!lines.length) throw new Error('There is nothing to export yet. Transcribe the video or add captions first.');
+  const body = format === 'srt' ? toSrt(lines) : format === 'vtt' ? toVtt(lines) : toText(lines);
+  const name = `${project.name.trim() || 'captions'}.${format}`;
+  downloadBlob(new Blob([body], { type: format === 'vtt' ? 'text/vtt' : 'text/plain' }), name);
+  return { message: `Saved ${name}` };
 }

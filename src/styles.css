@@ -397,3 +397,5 @@ kbd {
 .track-progress { display: flex; align-items: center; gap: 8px; }
 .track-progress .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
 .track-progress .bar div { height: 100%; background: var(--accent); }
+
+.export-row span { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; margin-right: 2px; }

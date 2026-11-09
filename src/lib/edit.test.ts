@@ -307,3 +307,23 @@ describe('keyframed motion', () => {
     expect(centreX(3)).toBeCloseTo(480);
   });
 });
+
+describe('caption export', () => {
+  const lines = [
+    { start: 3661.5, end: 3663.25, text: 'Second  \n\n line two' },
+    { start: 0.52, end: 2, text: 'Hello there.' },
+    { start: 5, end: 5, text: 'zero length is skipped' },
+  ];
+
+  it('writes SubRip', async () => {
+    const { toSrt } = await import('./subtitles');
+    expect(toSrt(lines)).toBe('1\n00:00:00,520 --> 00:00:02,000\nHello there.\n\n2\n01:01:01,500 --> 01:01:03,250\nSecond\nline two\n');
+  });
+
+  it('writes WebVTT and plain text', async () => {
+    const { toVtt, toText } = await import('./subtitles');
+    expect(toVtt(lines)).toBe('WEBVTT\n\n00:00:00.520 --> 00:00:02.000\nHello there.\n\n01:01:01.500 --> 01:01:03.250\nSecond\nline two\n');
+    expect(toText(lines)).toBe('Hello there.\n\nSecond line two\n');
+    expect(toVtt([])).toBe('WEBVTT\n\n');
+  });
+});

@@ -381,6 +381,9 @@ export const commands: Command[] = [
     hidden: true,
     run: ({ y, ...text }) => s().commit((p) => edit.styleCaptions(p, { y: y === undefined ? undefined : Number(y), text })),
   },
+  { id: 'captions.exportSrt', title: 'Export captions (SRT)', description: 'Download captions as a .srt file for YouTube, Vimeo and most players.', run: () => smart.exportCaptions('srt') },
+  { id: 'captions.exportVtt', title: 'Export captions (WebVTT)', description: 'Download captions as a .vtt file for web video players.', run: () => smart.exportCaptions('vtt') },
+  { id: 'captions.exportText', title: 'Export transcript (text)', description: 'Download what is said as a plain text file.', run: () => smart.exportCaptions('txt') },
   {
     id: 'captions.remove',
     title: 'Remove captions',

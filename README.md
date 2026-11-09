@@ -30,7 +30,7 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 - **Keyframed motion** – any clip can change position, size, rotation and opacity over time: press `K` to add a keyframe, move the playhead, then move or resize the clip. Blurs and spotlights can follow a moving target, zooms can pan, titles can slide in. Keyframes show as diamonds on the timeline and can be dragged to retime.
 - **Motion tracking** – place a blur, spotlight, shape or text over something, choose Track motion, and it follows that thing to the end of the clip by writing keyframes for you.
 - **AI assistant** – describe an edit in plain English and Claude carries it out on your timeline using the editor's own commands. It can read the transcript and look at frames, and each request is a single undo step. Needs your own Anthropic API key (Settings), which stays in your browser.
-- **Transcript tools** – speech is transcribed on your device with Whisper (nothing is uploaded). Generate captions, click a word to jump to it, or select words and cut them out of the video.
+- **Transcript tools** – speech is transcribed on your device with Whisper (nothing is uploaded). Generate captions, click a word to jump to it, or select words and cut them out of the video. Captions can be saved as SRT or WebVTT files, and the transcript as plain text.
 - **Remove silences** – cuts silent pauses out of the whole timeline in one click. No AI or key needed.
 - **Export** – frame-accurate MP4 (or WebM) at a chosen resolution, frame rate and quality, with mixed audio.
 - **Autosave** – the project and its media are stored in the browser (IndexedDB) and restored on reload.
@@ -85,5 +85,5 @@ for hosting vidz publicly with a shared key.
 ## Roadmap
 
 1. Automatic cursor effects, and tracking that also follows changes in size.
-2. Caption export (SRT/VTT), speaker labels, and faster transcription on WebGPU.
+2. Speaker labels and faster transcription on WebGPU.
 3. Faster export (WebCodecs decoding instead of per-frame seeking), multiple projects, optional desktop build.
