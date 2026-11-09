@@ -14,6 +14,20 @@ npm run build    # type-check + production build in dist/
 
 Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 
+### Desktop app (optional)
+
+The same editor also runs as a desktop app (Electron):
+
+```bash
+npm run desktop        # build and launch
+npm run desktop:dist   # build an installer for this operating system into release/
+```
+
+The desktop app adds two things a browser tab cannot do: its own picker for the screen or window
+to record, and, when you record a whole screen, a highlight that follows your mouse cursor
+automatically (it logs where the pointer was during the recording). Projects are stored in the
+app's own data folder, separately from any browser.
+
 ## What works today
 
 - **Media library** – import video, audio and images by drag-and-drop or file picker; filmstrips and waveforms are generated on import.
@@ -56,6 +70,7 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 | `src/lib/speakers.ts` | Groups voiceprints into speakers. |
 | `src/store.ts` | Zustand store: project, selection, playhead, undo history, autosave. |
 | `src/components/` | React UI. |
+| `desktop/` | Electron shell: serves `dist/`, source picker, cursor logging. `src/lib/desktop.ts` is the typed bridge. |
 
 ### Adjustment layers
 
@@ -87,4 +102,3 @@ for hosting vidz publicly with a shared key.
 ## Roadmap
 
 1. Faster transcription on WebGPU.
-2. An optional desktop build.

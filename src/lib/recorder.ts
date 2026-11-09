@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { useStore } from '../store';
 import { addMediaToTimeline } from './commands';
 import { updateClip } from './edit';
+import { desktop } from './desktop';
+import { addCursorPath } from './smart';
 
 export interface RecordOptions {
   screen: boolean;
@@ -21,6 +23,8 @@ interface Session {
   recorders: { recorder: MediaRecorder; chunks: Blob[]; role: 'screen' | 'camera' | 'audio' }[];
   streams: MediaStream[];
   audioContext?: AudioContext;
+  /** Desktop app: the cursor is being logged for a highlight. */
+  cursor?: boolean;
 }
 
 let session: Session | null = null;
@@ -96,6 +100,8 @@ export const useRecorder = create<RecorderState>((set, get) => ({
 
       session = { recorders, streams, audioContext };
       recorders.forEach((r) => r.recorder.start(1000));
+      // In the desktop app, log where the cursor goes so it can be highlighted afterwards.
+      if (screen && desktop) session.cursor = await desktop.cursorStart().catch(() => false);
       set({ status: 'recording', startedAt: Date.now() });
     } catch (err) {
       stopAll();
@@ -126,20 +132,23 @@ export const useRecorder = create<RecorderState>((set, get) => ({
         );
         current.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
         void current.audioContext?.close();
+        const cursor = current.cursor && desktop ? await desktop.cursorStop().catch(() => []) : [];
 
         const store = useStore.getState();
         const start = store.playhead;
+        let highlighted = false;
         for (const { file, role } of files) {
           const [mediaId] = await store.importFiles([file]);
           if (!mediaId) continue;
           const clipId = addMediaToTimeline(mediaId, { start });
+          if (clipId && role === 'screen' && addCursorPath(clipId, cursor)) highlighted = true;
           // A camera recorded alongside the screen becomes a picture-in-picture in the corner.
           if (clipId && role === 'camera' && files.length > 1) {
             const { width, height } = useStore.getState().project;
             store.mutate((p) => updateClip(p, clipId, { scale: 0.25, x: width * 0.35, y: height * 0.35 }));
           }
         }
-        if (files.length) useStore.getState().toast('Recording added to your timeline');
+        if (files.length) useStore.getState().toast(highlighted ? 'Recording added to your timeline, with a highlight that follows your cursor' : 'Recording added to your timeline');
       } catch (err) {
         useStore.getState().toast(`Recording failed: ${(err as Error).message}`, 'error');
       } finally {

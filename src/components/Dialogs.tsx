@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Film, Mic, Monitor, Plus, Trash2, X } from 'lucide-react';
 import { captureThumbnail } from '../lib/smart';
+import { CaptureSource, desktop } from '../lib/desktop';
 import { useStore } from '../store';
 import { commands, invokeCommand, paletteCommands, shortcutLabel } from '../lib/commands';
 import { ExportOptions, ExportResult, exportProject, supportsExport } from '../lib/export';
@@ -267,6 +268,32 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Desktop app only: choose which screen or window to record. */
+function SourcePicker() {
+  const [sources, setSources] = useState<CaptureSource[] | null>(null);
+  useEffect(() => desktop?.onPickSource(setSources), []);
+  if (!sources || !desktop) return null;
+  const choose = (id: string | null) => {
+    setSources(null);
+    void desktop!.chooseSource(id);
+  };
+  return (
+    <Modal title="What do you want to record?" onClose={() => choose(null)} className="projects">
+      <div className="project-grid">
+        {sources.map((source) => (
+          <button key={source.id} className="project-card new source-card" onClick={() => choose(source.id)}>
+            <div className="project-thumb" style={source.thumbnail ? { backgroundImage: `url(${source.thumbnail})` } : undefined}>
+              {!source.thumbnail && <Monitor size={26} />}
+            </div>
+            <strong>{source.name}</strong>
+            <small>{source.kind === 'screen' ? 'Whole screen · cursor is highlighted automatically' : 'Window'}</small>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
 function ago(time: number): string {
   const minutes = Math.round((Date.now() - time) / 60_000);
   if (minutes < 1) return 'just now';
@@ -332,7 +359,7 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function Dialogs() {
+function ActiveDialog() {
   const dialog = useStore((s) => s.dialog);
   const setDialog = useStore((s) => s.setDialog);
   const close = () => setDialog(null);
@@ -343,4 +370,14 @@ export function Dialogs() {
   if (dialog === 'settings') return <SettingsDialog onClose={close} />;
   if (dialog === 'projects') return <ProjectsDialog onClose={close} />;
   return null;
+}
+
+export function Dialogs() {
+  return (
+    <>
+      <ActiveDialog />
+      {/* Always listening, so a recording request is never missed. */}
+      {desktop && <SourcePicker />}
+    </>
+  );
 }

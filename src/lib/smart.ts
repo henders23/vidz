@@ -12,6 +12,7 @@ import { clipSize, drawFrame } from './render';
 import { toSrt, toText, toVtt } from './subtitles';
 import { downloadBlob } from './util';
 import { simplify, toGray, track, trackCursor } from './track';
+import type { CursorSample } from './desktop';
 import { clipEnd } from '../types';
 
 const s = () => useStore.getState();
@@ -276,4 +277,31 @@ export async function captureThumbnail() {
   } catch {
     // A missing thumbnail is not worth interrupting the user for.
   }
+}
+
+/**
+ * Desktop app only: turn the cursor positions logged during a screen recording
+ * into a highlight that follows the cursor over that recording's clip.
+ */
+export function addCursorPath(clipId: string, samples: CursorSample[]): string | null {
+  const { project } = s();
+  const clip = edit.getClip(project, clipId);
+  if (!clip || samples.length < 2) return null;
+  const size = clipSize(clip, project);
+  const points = samples
+    .filter((p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 && p.time <= clip.duration)
+    .map((p) => ({
+      time: clip.start + p.time,
+      x: clip.x + (p.x - 0.5) * size.width * clip.scale,
+      y: clip.y + (p.y - 0.5) * size.height * clip.scale,
+      scale: 1,
+    }));
+  if (points.length < 2) return null;
+  let highlightId: string | null = null;
+  s().mutate((p) => {
+    const added = edit.addShapeClip(p, 'glow', { start: clip.start }, clip.duration);
+    highlightId = added.clipId;
+    return edit.setKeyframes(added.project, added.clipId, simplify(points, 10), 'linear');
+  });
+  return highlightId;
 }

@@ -8,7 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "desktop": "vite build && electron .",
+    "desktop:start": "electron .",
+    "desktop:dist": "vite build && electron-builder"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.7.0",
@@ -24,8 +27,41 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.7",
     "vitest": "^5.1.0"
+  },
+  "main": "desktop/main.cjs",
+  "description": "A local-first video editor for screen recordings and tutorials.",
+  "author": "vidz",
+  "build": {
+    "appId": "app.vidz.desktop",
+    "productName": "vidz",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.video",
+      "extendInfo": {
+        "NSCameraUsageDescription": "vidz records your camera when you choose to include it in a recording.",
+        "NSMicrophoneUsageDescription": "vidz records your microphone when you choose to include it in a recording."
+      }
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "AudioVideo"
+    }
   }
 }
