@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { Project, hasSound } from './types';
-import { TranscribeProgress, transcribe } from './lib/transcribe';
+import { TranscribeProgress, labelSpeakers, transcribe } from './lib/transcribe';
 import * as edit from './lib/edit';
 import { MediaRuntime, deleteMediaData, importFile, loadMediaRuntime } from './lib/media';
 import { clamp } from './lib/util';
@@ -50,6 +50,8 @@ interface State {
   setPanel: (p: State['panel']) => void;
   /** Transcribe every clip on the timeline that has speech and no transcript yet. Returns false if nothing could be transcribed. */
   ensureTranscripts: () => Promise<boolean>;
+  /** Work out who is speaking in every transcribed clip on the timeline. Returns how many speakers were found. */
+  labelSpeakers: () => Promise<number>;
   toast: (message: string, kind?: Toast['kind']) => void;
   importFiles: (files: Iterable<File>) => Promise<string[]>;
   deleteMedia: (id: string) => void;
@@ -134,6 +136,26 @@ export const useStore = create<State>((set, get) => ({
     const id = ++toastId;
     set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }));
     setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), kind === 'error' ? 6000 : 3000);
+  },
+
+  labelSpeakers: async () => {
+    if (get().transcribing) throw new Error('A transcription is already running');
+    const { project } = get();
+    const ids = [...new Set(project.clips.filter((c) => hasSound(c) && c.mediaId).map((c) => c.mediaId!))];
+    const keys = new Set<string>();
+    try {
+      for (const id of ids) {
+        const rt = get().runtime[id];
+        if (!rt?.transcript?.length) continue;
+        const name = edit.getMedia(project, id)?.name ?? 'media';
+        const transcript = await labelSpeakers(id, rt.blob, rt.transcript, (p) => set({ transcribing: { name, ...p } }));
+        set((s) => (s.runtime[id] ? { runtime: { ...s.runtime, [id]: { ...s.runtime[id], transcript } } } : {}));
+        for (const w of transcript) if (w.speaker !== undefined) keys.add(`${id}:${w.speaker}`);
+      }
+    } finally {
+      set({ transcribing: null });
+    }
+    return keys.size;
   },
 
   importFiles: async (files) => {

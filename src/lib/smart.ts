@@ -56,8 +56,10 @@ export async function addCaptions(maxChars?: number) {
 /** Transcript as timed lines (or individual words) for a time window. */
 export async function transcript(start = 0, end = Infinity, wordLevel = false) {
   const all = (await ensureWords()).filter((w) => w.end > start && w.start < end);
-  if (wordLevel) return all.map((w) => ({ start: round(w.start), end: round(w.end), text: w.text }));
-  return edit.captionLines(all, 80).map((l) => ({ start: round(l.start), end: round(l.end), text: l.text }));
+  const names = edit.speakerLabels(s().project, all);
+  const who = (key?: string) => (key ? { speaker: names.get(key), speakerKey: key } : {});
+  if (wordLevel) return all.map((w) => ({ start: round(w.start), end: round(w.end), text: w.text, ...who(w.speakerKey) }));
+  return edit.captionLines(all, 80).map((l) => ({ start: round(l.start), end: round(l.end), text: l.text, ...who(l.speakerKey) }));
 }
 
 /** Drop defaults so the summary stays small. */
@@ -244,9 +246,18 @@ export type CaptionFormat = 'srt' | 'vtt' | 'txt';
 export function exportCaptions(format: CaptionFormat) {
   const { project } = s();
   const clips = project.clips.filter((c) => c.caption && c.text);
+  const all = words();
+  const names = edit.speakerLabels(project, all);
+  // Caption clips are exported exactly as written. Lines built from the transcript name
+  // the speaker each time it changes, when speakers have been labelled.
+  let lastSpeaker: string | undefined;
   const lines = clips.length
     ? clips.map((c) => ({ start: c.start, end: clipEnd(c), text: c.text!.content }))
-    : edit.captionLines(words());
+    : edit.captionLines(all).map((line) => {
+        const changed = names.size > 1 && line.speakerKey !== undefined && line.speakerKey !== lastSpeaker;
+        lastSpeaker = line.speakerKey ?? lastSpeaker;
+        return changed ? { ...line, text: `${names.get(line.speakerKey!)}: ${line.text}`, newTurn: true } : line;
+      });
   if (!lines.length) throw new Error('There is nothing to export yet. Transcribe the video or add captions first.');
   const body = format === 'srt' ? toSrt(lines) : format === 'vtt' ? toVtt(lines) : toText(lines);
   const name = `${project.name.trim() || 'captions'}.${format}`;

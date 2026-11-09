@@ -402,3 +402,7 @@ kbd {
 
 .check { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .check input { accent-color: var(--accent); }
+
+.speaker { display: block; margin-bottom: 2px; padding: 1px 7px; border: 0; border-radius: 10px; font-size: 11px; font-weight: 600; color: #fff; background: var(--video); user-select: none; }
+.speaker-2 { background: var(--audio); } .speaker-3 { background: var(--text-clip); } .speaker-4 { background: var(--shape); } .speaker-5 { background: var(--image); } .speaker-6 { background: #8a4fd8; }
+.speaker-input { display: block; margin-bottom: 2px; width: 140px; background: var(--bg); border: 1px solid var(--accent); border-radius: 6px; padding: 1px 6px; font-size: 12px; }

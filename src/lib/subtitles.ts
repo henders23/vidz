@@ -25,12 +25,12 @@ export function toVtt(lines: CaptionLine[]): string {
   return `WEBVTT\n\n${cues.join('\n')}`;
 }
 
-/** Plain text transcript, one paragraph per longer pause. */
-export function toText(lines: CaptionLine[]): string {
-  const sorted = usable(lines);
+/** Plain text transcript, one paragraph per longer pause or change of speaker. */
+export function toText(lines: (CaptionLine & { newTurn?: boolean })[]): string {
+  const sorted = usable(lines) as (CaptionLine & { newTurn?: boolean })[];
   let out = '';
   sorted.forEach((l, i) => {
-    if (i > 0) out += l.start - sorted[i - 1].end > 1.2 ? '\n\n' : ' ';
+    if (i > 0) out += l.newTurn || l.start - sorted[i - 1].end > 1.2 ? '\n\n' : ' ';
     out += clean(l.text).replace(/\n/g, ' ');
   });
   return out + (out ? '\n' : '');

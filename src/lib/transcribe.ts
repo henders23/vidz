@@ -3,13 +3,14 @@ import { get, set } from 'idb-keyval';
 import { Word } from '../types';
 import { decodeAudio } from './media';
 import { getSettings } from './settings';
-import type { TranscribeRequest, WorkerMessage } from './whisper.worker';
+import { clusterSpeakers, speechSegments } from './speakers';
+import type { EmbedRequest, TranscribeRequest, WorkerMessage } from './whisper.worker';
 
 const key = (mediaId: string) => `vidz:transcript:${mediaId}`;
 const SAMPLE_RATE = 16000;
 
 export interface TranscribeProgress {
-  stage: 'decode' | 'download' | 'transcribe';
+  stage: 'decode' | 'download' | 'transcribe' | 'speakers';
   progress?: number;
 }
 
@@ -30,34 +31,62 @@ async function toMono16k(blob: Blob): Promise<Float32Array> {
   return (await offline.startRendering()).getChannelData(0);
 }
 
-export async function transcribe(mediaId: string, blob: Blob, onProgress: (p: TranscribeProgress) => void): Promise<Word[]> {
-  onProgress({ stage: 'decode' });
-  const audio = await toMono16k(blob);
+const VOICE_MODEL = 'onnx-community/wespeaker-voxceleb-resnet34-LM';
+
+/** Send one job to the speech worker and wait for its final message. */
+function request<T extends WorkerMessage['type']>(
+  job: Omit<TranscribeRequest, 'id'> | Omit<EmbedRequest, 'id'>,
+  done: T,
+  onProgress: (p: TranscribeProgress) => void,
+): Promise<Extract<WorkerMessage, { type: T }>> {
   worker ??= new Worker(new URL('./whisper.worker.ts', import.meta.url), { type: 'module' });
   const id = nextId++;
-  const { whisperModel, language } = getSettings();
-  const words = await new Promise<Word[]>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const w = worker!;
+    const finish = () => {
+      w.removeEventListener('message', onMessage);
+      w.removeEventListener('error', onError);
+    };
     const onMessage = (e: MessageEvent<WorkerMessage>) => {
       const msg = e.data;
       if (msg.id !== id) return;
       if (msg.type === 'progress') return onProgress({ stage: msg.stage, progress: msg.progress });
-      w.removeEventListener('message', onMessage);
-      w.removeEventListener('error', onError);
-      if (msg.type === 'done') resolve(msg.words);
-      else reject(new Error(msg.message));
+      finish();
+      if (msg.type === done) resolve(msg as Extract<WorkerMessage, { type: T }>);
+      else reject(new Error(msg.type === 'error' ? msg.message : 'Unexpected reply from the speech worker'));
     };
     const onError = (e: ErrorEvent) => {
-      w.removeEventListener('message', onMessage);
-      w.removeEventListener('error', onError);
+      finish();
       worker = null;
-      reject(new Error(e.message || 'The speech recognition model could not be loaded. Check your internet connection and try again.'));
+      reject(new Error(e.message || 'The speech model could not be loaded. Check your internet connection and try again.'));
     };
     w.addEventListener('message', onMessage);
     w.addEventListener('error', onError);
-    const request: TranscribeRequest = { id, model: whisperModel, audio, language: language || 'en' };
-    w.postMessage(request, [audio.buffer]);
+    w.postMessage({ ...job, id }, [job.audio.buffer]);
   });
+}
+
+export async function transcribe(mediaId: string, blob: Blob, onProgress: (p: TranscribeProgress) => void): Promise<Word[]> {
+  onProgress({ stage: 'decode' });
+  const audio = await toMono16k(blob);
+  const { whisperModel, language } = getSettings();
+  const { words } = await request({ kind: 'transcribe', model: whisperModel, audio, language: language || 'en' }, 'done', onProgress);
   await set(key(mediaId), words);
   return words;
+}
+
+/** Work out who says what in an existing transcript. Returns the words with a speaker number on each. */
+export async function labelSpeakers(mediaId: string, blob: Blob, words: Word[], onProgress: (p: TranscribeProgress) => void): Promise<Word[]> {
+  onProgress({ stage: 'decode' });
+  const audio = await toMono16k(blob);
+  const segments = speechSegments(words);
+  if (!segments.length) return words;
+  const { embeddings } = await request({ kind: 'embed', model: VOICE_MODEL, audio, segments: segments.map(({ start, end }) => ({ start, end })) }, 'embeddings', onProgress);
+  const speakers = clusterSpeakers(embeddings, segments.map((s) => s.end - s.start));
+  const labelled = words.map((w) => ({ ...w }));
+  segments.forEach((segment, i) => {
+    for (let n = segment.from; n <= segment.to; n++) labelled[n].speaker = speakers[i];
+  });
+  await set(key(mediaId), labelled);
+  return labelled;
 }

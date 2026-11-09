@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Captions, Download, Scissors } from 'lucide-react';
+import { Captions, Download, Scissors, Users } from 'lucide-react';
 import { useStore } from '../store';
 import * as edit from '../lib/edit';
 import { invokeCommand } from '../lib/commands';
@@ -46,12 +46,21 @@ export function Transcript() {
     setPicked(null);
   };
 
-  // Start a new paragraph at each longer pause.
+  // Start a new paragraph at each longer pause or change of speaker.
+  const names = useMemo(() => edit.speakerLabels(project, words), [project, words]);
   const paragraphs: number[][] = [];
   words.forEach((w, i) => {
-    if (i === 0 || w.start - words[i - 1].end > 1.2) paragraphs.push([]);
+    if (i === 0 || w.start - words[i - 1].end > 1.2 || w.speakerKey !== words[i - 1].speakerKey) paragraphs.push([]);
     paragraphs[paragraphs.length - 1].push(i);
   });
+  // Which speaker label is being renamed, by the index of the first word of its paragraph
+  // (a speaker has a label on each of their turns; only the clicked one becomes a text box).
+  const [renaming, setRenaming] = useState<number | null>(null);
+  const rename = (key: string, name: string) => {
+    setRenaming(null);
+    if (name.trim() === names.get(key)) return;
+    useStore.getState().commit((p) => ({ ...p, speakerNames: { ...p.speakerNames, [key]: name.trim() } }));
+  };
 
   return (
     <div className="transcript">
@@ -63,6 +72,7 @@ export function Transcript() {
         )}
         <button className="btn small" disabled={busy || !words.length} onClick={() => invokeCommand('timeline.addCaptions')}><Captions size={13} /> Captions</button>
         <button className="btn small" disabled={!picked} title="Cut the selected words out of the video" onClick={cut}><Scissors size={13} /> Cut selection</button>
+        <button className="btn small" disabled={busy || !words.length} title="Work out who is speaking. Runs on your device; the first run downloads a small voice model." onClick={() => invokeCommand('timeline.labelSpeakers')}><Users size={13} /> Speakers</button>
       </div>
       {words.length > 0 && (
         <div className="quick-actions export-row">
@@ -81,8 +91,28 @@ export function Transcript() {
         </p>
       ) : (
         <div className="transcript-body" ref={bodyRef} onMouseUp={readSelection} onKeyUp={readSelection}>
-          {paragraphs.map((indexes) => (
+          {paragraphs.map((indexes) => {
+            const key = words[indexes[0]].speakerKey;
+            const newTurn = key && (indexes[0] === 0 || words[indexes[0] - 1].speakerKey !== key);
+            return (
             <p key={indexes[0]}>
+              {newTurn && key && (renaming === indexes[0] ? (
+                <input
+                  className="speaker-input"
+                  autoFocus
+                  defaultValue={names.get(key)}
+                  aria-label="Speaker name"
+                  onBlur={(e) => rename(key, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                    if (e.key === 'Escape') setRenaming(null);
+                  }}
+                />
+              ) : (
+                <button className={`speaker speaker-${([...names.keys()].indexOf(key) % 6) + 1}`} title="Click to rename this speaker" onClick={() => setRenaming(indexes[0])}>
+                  {names.get(key)}
+                </button>
+              ))}
               {indexes.map((i) => (
                 <span
                   key={i}
@@ -94,7 +124,8 @@ export function Transcript() {
                 </span>
               ))}
             </p>
-          ))}
+            );
+          })}
           <p className="insp-hint">Click a word to jump there. Select words and choose Cut selection to remove them from the video.</p>
         </div>
       )}

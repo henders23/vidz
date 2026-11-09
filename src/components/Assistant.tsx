@@ -19,6 +19,7 @@ export function TranscribeStatus() {
   const label =
     t.stage === 'download' ? `Downloading speech model… ${Math.round((t.progress ?? 0) * 100)}%`
     : t.stage === 'decode' ? `Reading audio from ${t.name}…`
+    : t.stage === 'speakers' ? `Working out who is speaking… ${Math.round((t.progress ?? 0) * 100)}%`
     : `Transcribing ${t.name}… this runs on your device and can take a while`;
   return (
     <div className="transcribe-status" role="status">

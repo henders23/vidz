@@ -327,3 +327,34 @@ describe('caption export', () => {
     expect(toVtt([])).toBe('WEBVTT\n\n');
   });
 });
+
+describe('speaker labels', () => {
+  it('splits speech into segments and groups similar voices', async () => {
+    const { speechSegments, clusterSpeakers } = await import('./speakers');
+    const w = (text: string, start: number, end: number) => ({ text, start, end });
+    const words = [w('Hi', 0, 0.3), w('there.', 0.35, 0.8), w('How', 2, 2.2), w('are', 2.25, 2.4), w('you?', 2.45, 2.9), w('Fine.', 4, 4.5)];
+    expect(speechSegments(words).map((s) => [s.from, s.to])).toEqual([[0, 1], [2, 4], [5, 5]]);
+    // Two voices, as noisy copies of two directions; speakers are numbered by first appearance.
+    const voice = (base: number[], jitter: number) => Float32Array.from(base.map((v, i) => v + jitter * Math.sin(i * 7 + jitter * 50)));
+    const a = [1, 0.2, 0, 0.1];
+    const b = [0, 0.1, 1, -0.3];
+    const speakers = clusterSpeakers([voice(b, 0.05), voice(a, 0.1), voice(b, 0.12), voice(a, 0.02), voice(b, 0.08)], [2, 3, 1, 5, 2]);
+    expect(speakers).toEqual([1, 2, 1, 2, 1]);
+    expect(clusterSpeakers([voice(a, 0.05), voice(a, 0.1)], [1, 1])).toEqual([1, 1]);
+  });
+
+  it('carries speakers onto the timeline, into caption lines and names', () => {
+    const { p } = add(setup(), 'v', 0);
+    const words = [
+      { text: 'Hello', start: 0, end: 0.4, speaker: 1 },
+      { text: 'there', start: 0.45, end: 0.8, speaker: 1 },
+      { text: 'Hi', start: 0.9, end: 1.2, speaker: 2 },
+    ];
+    const mapped = edit.timelineWords(p, () => words);
+    expect(mapped.map((w) => w.speakerKey)).toEqual(['v:1', 'v:1', 'v:2']);
+    // A change of speaker always starts a new caption.
+    expect(edit.captionLines(mapped).map((l) => [l.text, l.speakerKey])).toEqual([['Hello there', 'v:1'], ['Hi', 'v:2']]);
+    expect([...edit.speakerLabels(p, mapped)]).toEqual([['v:1', 'Speaker 1'], ['v:2', 'Speaker 2']]);
+    expect(edit.speakerLabels({ ...p, speakerNames: { 'v:2': 'Sam' } }, mapped).get('v:2')).toBe('Sam');
+  });
+});

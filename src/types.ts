@@ -152,6 +152,8 @@ export interface Project {
   tracks: Track[];
   clips: Clip[];
   media: MediaAsset[];
+  /** Names the user has given to speakers, by speaker key. */
+  speakerNames?: Record<string, string>;
 }
 
 export const isVisual = (c: Clip) => c.type !== 'audio';
@@ -165,11 +167,15 @@ export interface Word {
   text: string;
   start: number;
   end: number;
+  /** Speaker number within this media item (1, 2, ...), once speakers have been labelled. */
+  speaker?: number;
 }
 
 /** A word placed on the timeline through the clip that plays it. */
 export interface TimelineWord extends Word {
   clipId: string;
+  /** Identifies the speaker across the project: media id plus speaker number. */
+  speakerKey?: string;
 }
 
 export interface TimeRange {

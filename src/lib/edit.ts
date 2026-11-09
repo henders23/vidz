@@ -564,6 +564,8 @@ export function timelineWords(p: Project, wordsOf: (mediaId: string) => Word[] |
         start: clip.start + (Math.max(w.start, from) - from) / clip.speed,
         end: clip.start + (Math.min(w.end, to) - from) / clip.speed,
         clipId: clip.id,
+        speaker: w.speaker,
+        speakerKey: w.speaker === undefined ? undefined : `${clip.mediaId}:${w.speaker}`,
       });
     }
   }
@@ -572,6 +574,7 @@ export function timelineWords(p: Project, wordsOf: (mediaId: string) => Word[] |
 
 export interface CaptionLine extends TimeRange {
   text: string;
+  speakerKey?: string;
 }
 
 /** Group words into short, readable caption lines. */
@@ -580,7 +583,7 @@ export function captionLines(words: TimelineWord[], maxChars = 34): CaptionLine[
   let current: TimelineWord[] = [];
   const flush = () => {
     if (!current.length) return;
-    lines.push({ text: current.map((w) => w.text).join(' '), start: current[0].start, end: current[current.length - 1].end });
+    lines.push({ text: current.map((w) => w.text).join(' '), start: current[0].start, end: current[current.length - 1].end, speakerKey: current[0].speakerKey });
     current = [];
   };
   for (const word of words) {
@@ -588,7 +591,8 @@ export function captionLines(words: TimelineWord[], maxChars = 34): CaptionLine[
     const length = current.reduce((n, w) => n + w.text.length + 1, 0);
     // Let a clause-ending word run slightly over rather than strand it alone on the next caption.
     const limit = /[.!?,;:]$/.test(word.text) ? maxChars + 10 : maxChars;
-    if (last && (word.start - last.end > 0.7 || length + word.text.length > limit || /[.!?]$/.test(last.text))) flush();
+    const newSpeaker = !!last && last.speakerKey !== word.speakerKey;
+    if (last && (newSpeaker || word.start - last.end > 0.7 || length + word.text.length > limit || /[.!?]$/.test(last.text))) flush();
     current.push(word);
   }
   flush();
@@ -806,4 +810,18 @@ export function setPathFrom(p: Project, id: string, time: number, path: { time: 
     };
   });
   return updateClip(p, id, { keyframes: [...earlier, ...tracked].sort((a, b) => a.time - b.time), motion: 'linear' });
+}
+
+/**
+ * Display names for the speakers heard on the timeline, by speaker key:
+ * the user's own name for them if set, otherwise "Speaker 1", "Speaker 2"...
+ * in order of first appearance. Empty when speakers have not been labelled.
+ */
+export function speakerLabels(p: Project, words: TimelineWord[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const w of words) {
+    if (!w.speakerKey || labels.has(w.speakerKey)) continue;
+    labels.set(w.speakerKey, p.speakerNames?.[w.speakerKey]?.trim() || `Speaker ${labels.size + 1}`);
+  }
+  return labels;
 }

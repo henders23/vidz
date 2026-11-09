@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
 /** Runs Whisper speech-to-text entirely in the browser. Audio never leaves the device. */
-import { pipeline } from '@huggingface/transformers';
+import { AutoModel, AutoProcessor, pipeline } from '@huggingface/transformers';
 
 export interface TranscribeRequest {
+  kind: 'transcribe';
   id: number;
   model: string;
   /** Mono, 16 kHz samples. */
@@ -11,8 +12,18 @@ export interface TranscribeRequest {
   language: string;
 }
 
+/** Ask for a voiceprint (speaker embedding) for each stretch of speech. */
+export interface EmbedRequest {
+  kind: 'embed';
+  id: number;
+  model: string;
+  audio: Float32Array;
+  segments: { start: number; end: number }[];
+}
+
 export type WorkerMessage =
-  | { id: number; type: 'progress'; stage: 'download' | 'transcribe'; progress?: number }
+  | { id: number; type: 'embeddings'; embeddings: Float32Array[] }
+  | { id: number; type: 'progress'; stage: 'download' | 'transcribe' | 'speakers'; progress?: number }
   | { id: number; type: 'done'; words: { text: string; start: number; end: number }[] }
   | { id: number; type: 'error'; message: string };
 
@@ -44,7 +55,41 @@ function load(model: string, id: number): Promise<Transcriber> {
   return transcriber;
 }
 
-self.onmessage = async (e: MessageEvent<TranscribeRequest>) => {
+const SAMPLE_RATE = 16000;
+type Tensor = { data: Float32Array };
+let voiceModel: Promise<{ processor: (audio: Float32Array) => Promise<unknown>; model: (inputs: unknown) => Promise<Record<string, Tensor>> }> | null = null;
+
+async function embed({ id, model, audio, segments }: EmbedRequest) {
+  voiceModel ??= (async () => ({
+    processor: (await AutoProcessor.from_pretrained(model, {})) as unknown as (audio: Float32Array) => Promise<unknown>,
+    model: (await AutoModel.from_pretrained(model, { dtype: 'fp32' })) as unknown as (inputs: unknown) => Promise<Record<string, Tensor>>,
+  }))();
+  voiceModel.catch(() => (voiceModel = null));
+  const { processor, model: net } = await voiceModel;
+  const embeddings: Float32Array[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    // Very short stretches are widened a little: a voice needs about a second to be recognisable.
+    const middle = (segments[i].start + segments[i].end) / 2;
+    const half = Math.max(0.6, (segments[i].end - segments[i].start) / 2);
+    const from = Math.max(0, Math.floor((middle - half) * SAMPLE_RATE));
+    const to = Math.min(audio.length, Math.ceil((middle + half) * SAMPLE_RATE));
+    const output = await net(await processor(audio.subarray(from, to)));
+    const tensor = output.embeddings ?? output.last_hidden_state ?? Object.values(output)[0];
+    embeddings.push(Float32Array.from(tensor.data));
+    post({ id, type: 'progress', stage: 'speakers', progress: (i + 1) / segments.length });
+  }
+  post({ id, type: 'embeddings', embeddings });
+}
+
+self.onmessage = async (e: MessageEvent<TranscribeRequest | EmbedRequest>) => {
+  if (e.data.kind === 'embed') {
+    try {
+      await embed(e.data);
+    } catch (err) {
+      post({ id: e.data.id, type: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
   const { id, model, audio, language } = e.data;
   try {
     const transcriber = await load(model, id);

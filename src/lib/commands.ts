@@ -374,6 +374,25 @@ export const commands: Command[] = [
     run: async () => ({ message: `Transcribed ${(await smart.ensureWords()).length} words` }),
   },
   {
+    id: 'timeline.labelSpeakers',
+    title: 'Label speakers',
+    description: 'Work out who is speaking (Speaker 1, Speaker 2, ...) in the transcribed speech. Runs on this device. The transcript then names the speaker of each line.',
+    params: { type: 'object', properties: {} },
+    run: async () => {
+      await smart.ensureWords();
+      const speakers = await s().labelSpeakers();
+      return { speakers, message: speakers === 1 ? 'Found one speaker' : `Found ${speakers} speakers` };
+    },
+  },
+  {
+    id: 'speaker.rename',
+    title: 'Rename speaker',
+    description: 'Give a speaker a name. speakerKey comes from timeline_getTranscript.',
+    params: { type: 'object', properties: { speakerKey: str, name: str }, required: ['speakerKey', 'name'] },
+    hidden: true,
+    run: ({ speakerKey, name }) => s().commit((p) => ({ ...p, speakerNames: { ...p.speakerNames, [String(speakerKey)]: String(name) } })),
+  },
+  {
     id: 'timeline.addCaptions',
     title: 'Add captions',
     description: 'Generate captions from the speech on the timeline, replacing any existing captions. Transcribes first if needed.',
