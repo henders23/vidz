@@ -1,0 +1,105 @@
+export type MediaKind = 'video' | 'audio' | 'image';
+
+/** Serializable description of an imported file. The bytes live in IndexedDB. */
+export interface MediaAsset {
+  id: string;
+  name: string;
+  kind: MediaKind;
+  mime: string;
+  size: number;
+  /** Seconds. Images have 0. */
+  duration: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+}
+
+export type TrackKind = 'video' | 'audio';
+
+export interface Track {
+  id: string;
+  kind: TrackKind;
+  name: string;
+  muted: boolean;
+  hidden: boolean;
+  locked: boolean;
+}
+
+export type ClipType = 'video' | 'audio' | 'image' | 'text' | 'shape';
+
+export interface TextProps {
+  content: string;
+  fontFamily: string;
+  fontSize: number;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  align: 'left' | 'center' | 'right';
+  /** Empty string = no background box. */
+  background: string;
+  outline: string;
+  outlineWidth: number;
+}
+
+export type ShapeKind = 'rect' | 'ellipse' | 'arrow';
+
+export interface ShapeProps {
+  kind: ShapeKind;
+  width: number;
+  height: number;
+  /** Empty string = no fill. */
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  radius: number;
+}
+
+export interface Filters {
+  brightness: number; // 1 = unchanged
+  contrast: number;
+  saturation: number;
+  blur: number; // px
+}
+
+export interface Clip {
+  id: string;
+  trackId: string;
+  type: ClipType;
+  mediaId?: string;
+  /** Timeline position, seconds. */
+  start: number;
+  /** Length on the timeline, seconds. */
+  duration: number;
+  /** Where in the source the clip begins, seconds. */
+  offset: number;
+  speed: number;
+  /** Offset of the clip's centre from the canvas centre, in canvas pixels. */
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+  volume: number;
+  fadeIn: number;
+  fadeOut: number;
+  filters: Filters;
+  text?: TextProps;
+  shape?: ShapeProps;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  background: string;
+  /** Top-most visual layer first. */
+  tracks: Track[];
+  clips: Clip[];
+  media: MediaAsset[];
+}
+
+export const isVisual = (c: Clip) => c.type !== 'audio';
+export const hasSound = (c: Clip) => c.type === 'video' || c.type === 'audio';
+export const clipEnd = (c: Clip) => c.start + c.duration;
