@@ -1,9 +1,9 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight, Circle, Copy, Eye, EyeOff, Lock, LockOpen, Maximize2, Minus, Plus, Redo2, Scissors, Square, Trash2, Type,
+  ArrowRight, Blend, Circle, Copy, Droplet, Focus, MousePointerClick, ZoomIn, Eye, EyeOff, Lock, LockOpen, Maximize2, Minus, Plus, Redo2, Scissors, Square, Trash2, Type,
   Undo2, Volume2, VolumeX, X,
 } from 'lucide-react';
-import { Clip, Track, clipEnd } from '../types';
+import { Clip, Track, canTransition, clipEnd } from '../types';
 import { armHistory, liveEdit, useStore } from '../store';
 import * as edit from '../lib/edit';
 import { addMediaToTimeline, filesFromDrop, runCommand, shortcutLabel, commands } from '../lib/commands';
@@ -32,6 +32,15 @@ function ToolButton({ command, children, disabled }: { command: string; children
   );
 }
 
+function LabelButton({ command, label, children }: { command: string; label: string; children: React.ReactNode }) {
+  const c = commands.find((x) => x.id === command)!;
+  return (
+    <button className="tool-label" title={c.description + shortcutOf(command)} onClick={() => runCommand(command)}>
+      {children} {label}
+    </button>
+  );
+}
+
 function Toolbar() {
   const hasSelection = useStore((s) => s.selection.length > 0);
   const canUndo = useStore((s) => s.past.length > 0);
@@ -51,6 +60,12 @@ function Toolbar() {
       <ToolButton command="insert.rect"><Square size={16} /></ToolButton>
       <ToolButton command="insert.ellipse"><Circle size={16} /></ToolButton>
       <ToolButton command="insert.arrow"><ArrowRight size={16} /></ToolButton>
+      <ToolButton command="insert.pulse"><MousePointerClick size={16} /></ToolButton>
+      <span className="sep" />
+      <LabelButton command="insert.zoom" label="Zoom"><ZoomIn size={14} /></LabelButton>
+      <LabelButton command="insert.blur" label="Blur"><Droplet size={14} /></LabelButton>
+      <LabelButton command="insert.spotlight" label="Spotlight"><Focus size={14} /></LabelButton>
+      <LabelButton command="clip.addTransition" label="Transition"><Blend size={14} /></LabelButton>
       <span className="grow" />
       <ToolButton command="view.zoomFit"><Maximize2 size={15} /></ToolButton>
       <ToolButton command="view.zoomOut"><Minus size={16} /></ToolButton>
@@ -169,11 +184,17 @@ const ClipView = memo(function ClipView({
   const rt = useStore((s) => (clip.mediaId ? s.runtime[clip.mediaId] : undefined));
   const width = Math.max(2, clip.duration * pxPerSec);
   const inner = laneH - 8;
-  const label = clip.type === 'text' ? clip.text!.content.split('\n')[0] : clip.type === 'shape' ? clip.shape!.kind : media?.name ?? 'Missing media';
+  const label =
+    clip.type === 'text' ? clip.text!.content.split('\n')[0]
+    : clip.type === 'shape' ? (clip.shape!.kind === 'pulse' ? 'click pulse' : clip.shape!.kind)
+    : clip.type === 'zoom' ? `Zoom ${(1 / clip.scale).toFixed(1)}×`
+    : clip.type === 'effect' ? clip.effect!.kind
+    : media?.name ?? 'Missing media';
+  const fx = clip.type === 'effect' ? `fx-${clip.effect!.kind}` : '';
   const showWave = !!rt?.peaks && (clip.type === 'audio' || clip.type === 'video');
   return (
     <div
-      className={`clip clip-${clip.type} ${selected ? 'selected' : ''} ${locked ? 'locked' : ''}`}
+      className={`clip clip-${clip.type} ${fx} ${selected ? 'selected' : ''} ${locked ? 'locked' : ''}`}
       style={{ left: clip.start * pxPerSec, width, height: inner }}
       data-clip-id={clip.id}
       onPointerDown={(e) => onPointerDown(e, clip, 'move')}
@@ -183,6 +204,11 @@ const ClipView = memo(function ClipView({
       )}
       {clip.type === 'image' && rt && <div className="filmstrip still" style={{ backgroundImage: `url(${rt.url})` }} />}
       {showWave && <Waveform clip={clip} peaks={rt!.peaks!} width={width} height={clip.type === 'audio' ? inner : Math.round(inner * 0.4)} />}
+      {clip.transition && canTransition(clip) && (
+        <div className="transition-mark" style={{ width: clip.transition.duration * pxPerSec }} title={`Transition: ${clip.transition.type}`}>
+          <Blend size={12} />
+        </div>
+      )}
       {clip.fadeIn > 0 && <div className="fade fade-in" style={{ width: clip.fadeIn * pxPerSec }} />}
       {clip.fadeOut > 0 && <div className="fade fade-out" style={{ width: clip.fadeOut * pxPerSec }} />}
       <span className="clip-label">

@@ -1,5 +1,5 @@
 import { AlignCenter, AlignLeft, AlignRight, Bold, Italic } from 'lucide-react';
-import { Clip, Filters, Project, ShapeProps, TextProps } from '../types';
+import { Clip, EffectKind, EffectProps, Filters, Project, ShapeProps, TextProps, TransitionType, canTransition } from '../types';
 import { armHistory, liveEdit, useStore } from '../store';
 import * as edit from '../lib/edit';
 import { clipSize } from '../lib/render';
@@ -184,14 +184,14 @@ function ShapeSection({ clip, set }: { clip: Clip; set: (patch: Partial<Clip>) =
   const sh = clip.shape!;
   const setShape = (patch: Partial<ShapeProps>) => set({ shape: { ...sh, ...patch } });
   return (
-    <Section title="Shape">
+    <Section title={sh.kind === 'pulse' ? 'Click pulse' : 'Shape'}>
       <Row label="Size">
         <NumberField value={sh.width} min={2} onChange={(v) => setShape({ width: Math.max(2, v) })} />
         <span className="times">×</span>
         <NumberField value={sh.height} min={2} onChange={(v) => setShape({ height: Math.max(2, v) })} />
       </Row>
-      <Row label="Fill"><ColorField optional value={sh.fill} onChange={(fill) => setShape({ fill })} /></Row>
-      <Row label="Border">
+      {sh.kind !== 'pulse' && <Row label="Fill"><ColorField optional value={sh.fill} onChange={(fill) => setShape({ fill })} /></Row>}
+      <Row label={sh.kind === 'pulse' ? 'Ring' : 'Border'}>
         <ColorField value={sh.stroke} onChange={(stroke) => setShape({ stroke })} />
         <NumberField value={sh.strokeWidth} min={0} max={200} onChange={(v) => setShape({ strokeWidth: Math.max(0, v) })} suffix="px" />
       </Row>
@@ -202,10 +202,99 @@ function ShapeSection({ clip, set }: { clip: Clip; set: (patch: Partial<Clip>) =
   );
 }
 
+const EFFECT_LABEL: Record<EffectKind, string> = { blur: 'Blur', pixelate: 'Pixelate', spotlight: 'Spotlight' };
+
+function EffectSection({ clip, set }: { clip: Clip; set: (patch: Partial<Clip>) => void }) {
+  const fx = clip.effect!;
+  const setFx = (patch: Partial<EffectProps>) => set({ effect: { ...fx, ...patch } });
+  return (
+    <Section title="Region effect">
+      <Row label="Effect">
+        <select
+          value={fx.kind}
+          onChange={(e) => {
+            const kind = e.target.value as EffectKind;
+            armHistory();
+            setFx({ kind, amount: edit.EFFECT_DEFAULT_AMOUNT[kind] });
+          }}
+        >
+          {(Object.keys(EFFECT_LABEL) as EffectKind[]).map((k) => <option key={k} value={k}>{EFFECT_LABEL[k]}</option>)}
+        </select>
+      </Row>
+      <Row label="Shape">
+        <span className="seg text">
+          <button className={fx.region === 'rect' ? 'on' : ''} onClick={() => { armHistory(); setFx({ region: 'rect' }); }}>Rectangle</button>
+          <button className={fx.region === 'ellipse' ? 'on' : ''} onClick={() => { armHistory(); setFx({ region: 'ellipse' }); }}>Ellipse</button>
+        </span>
+      </Row>
+      {fx.kind === 'spotlight' ? (
+        <Slider label="Dimming" value={fx.amount} min={0.1} max={1} step={0.01} display={pct} reset={0.7} onChange={(amount) => setFx({ amount })} />
+      ) : (
+        <Slider label="Strength" value={fx.amount} min={2} max={80} step={1} display={(v) => `${v}px`} reset={24} onChange={(amount) => setFx({ amount })} />
+      )}
+      <Row label="Size">
+        <NumberField value={fx.width} min={8} onChange={(v) => setFx({ width: Math.max(8, v) })} />
+        <span className="times">×</span>
+        <NumberField value={fx.height} min={8} onChange={(v) => setFx({ height: Math.max(8, v) })} />
+      </Row>
+      <Row label="Position">
+        <NumberField value={clip.x} onChange={(x) => set({ x })} suffix="X" />
+        <NumberField value={clip.y} onChange={(y) => set({ y })} suffix="Y" />
+      </Row>
+      <p className="insp-hint">Drag the box in the preview to place it; drag a corner to resize. It affects everything on the tracks below.</p>
+    </Section>
+  );
+}
+
+function ZoomSection({ clip, set }: { clip: Clip; set: (patch: Partial<Clip>) => void }) {
+  const maxEase = clip.duration / 2;
+  return (
+    <Section title="Zoom & pan">
+      <Slider label="Zoom" value={1 / clip.scale} min={1} max={6} step={0.05} display={(v) => `${v.toFixed(1)}×`} reset={2} onChange={(level) => set({ scale: 1 / level })} />
+      <Row label="Centre">
+        <NumberField value={clip.x} onChange={(x) => set({ x })} suffix="X" />
+        <NumberField value={clip.y} onChange={(y) => set({ y })} suffix="Y" />
+      </Row>
+      <Slider label="Zoom in" value={Math.min(clip.fadeIn, maxEase)} min={0} max={Math.min(3, maxEase)} step={0.05} display={secs2} reset={0.6} onChange={(fadeIn) => set({ fadeIn })} />
+      <Slider label="Zoom out" value={Math.min(clip.fadeOut, maxEase)} min={0} max={Math.min(3, maxEase)} step={0.05} display={secs2} reset={0.6} onChange={(fadeOut) => set({ fadeOut })} />
+      <p className="insp-hint">Drag the box in the preview over the area to zoom into. Everything on the tracks below zooms; stretch the clip on the timeline to hold the zoom longer.</p>
+    </Section>
+  );
+}
+const secs2 = (v: number) => `${v.toFixed(2)}s`;
+
+const TRANSITIONS: [TransitionType, string][] = [
+  ['dissolve', 'Cross dissolve'],
+  ['wipe', 'Wipe'],
+  ['push', 'Push'],
+  ['zoom', 'Zoom'],
+  ['dip', 'Fade through'],
+];
+
+function TransitionSection({ clip }: { clip: Clip }) {
+  const tr = clip.transition;
+  const apply = (type: TransitionType | null, duration = tr?.duration ?? 0.5) => liveEdit((p) => edit.setTransition(p, clip.id, type, duration));
+  return (
+    <Section title="Transition in">
+      <Row label="Style">
+        <select value={tr?.type ?? 'none'} onChange={(e) => { armHistory(); apply(e.target.value === 'none' ? null : (e.target.value as TransitionType)); }}>
+          <option value="none">None</option>
+          {TRANSITIONS.map(([type, label]) => <option key={type} value={type}>{label}</option>)}
+        </select>
+      </Row>
+      {tr && (
+        <Slider label="Duration" value={tr.duration} min={0.1} max={Math.max(0.1, Math.min(3, clip.duration))} step={0.05} display={secs2} reset={0.5} onChange={(d) => apply(tr.type, d)} />
+      )}
+      <p className="insp-hint">Blends from the clip that ends where this one begins on the same track.</p>
+    </Section>
+  );
+}
+
 function ClipInspector({ clip, project }: { clip: Clip; project: Project }) {
   const set = (patch: Partial<Clip>) => liveEdit((p) => edit.updateClip(p, clip.id, patch));
   const setFilter = (patch: Partial<Filters>) => set({ filters: { ...clip.filters, ...patch } });
-  const visual = clip.type !== 'audio';
+  const adjustment = clip.type === 'zoom' || clip.type === 'effect';
+  const visual = clip.type !== 'audio' && !adjustment;
   const timed = clip.type === 'video' || clip.type === 'audio';
   const media = edit.getMedia(project, clip.mediaId);
   const fitTo = (mode: 'fit' | 'fill') => {
@@ -220,11 +309,13 @@ function ClipInspector({ clip, project }: { clip: Clip; project: Project }) {
     <>
       <div className="insp-title">
         <span className={`dot clip-${clip.type}`} />
-        <strong>{clip.type === 'text' ? 'Text' : clip.type === 'shape' ? 'Shape' : media?.name ?? 'Clip'}</strong>
+        <strong>{clip.type === 'text' ? 'Text' : clip.type === 'shape' ? (clip.shape!.kind === 'pulse' ? 'Click pulse' : 'Shape') : clip.type === 'zoom' ? 'Zoom' : clip.type === 'effect' ? EFFECT_LABEL[clip.effect!.kind] : media?.name ?? 'Clip'}</strong>
         <small>{formatTime(clip.start, project.fps)} · {clip.duration.toFixed(2)}s</small>
       </div>
       {clip.type === 'text' && <TextSection clip={clip} set={set} />}
       {clip.type === 'shape' && <ShapeSection clip={clip} set={set} />}
+      {clip.type === 'zoom' && <ZoomSection clip={clip} set={set} />}
+      {clip.type === 'effect' && <EffectSection clip={clip} set={set} />}
       {visual && (
         <Section title="Transform">
           <Row label="Position">
@@ -260,10 +351,11 @@ function ClipInspector({ clip, project }: { clip: Clip; project: Project }) {
           />
         </Section>
       )}
-      <Section title="Fades">
+      {canTransition(clip) && <TransitionSection clip={clip} />}
+      {clip.type !== 'zoom' && <Section title="Fades">
         <Slider label="Fade in" value={Math.min(clip.fadeIn, maxFade)} min={0} max={Math.min(5, maxFade)} step={0.1} display={secs} reset={0} onChange={(fadeIn) => set({ fadeIn })} />
         <Slider label="Fade out" value={Math.min(clip.fadeOut, maxFade)} min={0} max={Math.min(5, maxFade)} step={0.1} display={secs} reset={0} onChange={(fadeOut) => set({ fadeOut })} />
-      </Section>
+      </Section>}
       {(clip.type === 'video' || clip.type === 'image') && (
         <Section title="Colour">
           <Slider label="Brightness" value={clip.filters.brightness} min={0} max={2} step={0.01} display={pct} reset={1} onChange={(brightness) => setFilter({ brightness })} />

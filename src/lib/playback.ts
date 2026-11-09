@@ -2,9 +2,9 @@
  * Live preview engine. The store's playhead is the master clock; media elements
  * are slaved to it (and re-seeked if they drift) and composited onto the canvas.
  */
-import { Clip, clipEnd, hasSound } from '../types';
+import { Clip, Project, clipEnd, hasSound } from '../types';
 import { useStore } from '../store';
-import { fadeFactor, getMedia, projectDuration } from './edit';
+import { fadeFactor, getClip, getMedia, projectDuration, renderItems } from './edit';
 import { drawFrame } from './render';
 import { clamp } from './util';
 
@@ -82,16 +82,19 @@ class PreviewEngine {
     const { project, runtime, playhead: t, playing } = useStore.getState();
     const tracks = new Map(project.tracks.map((tr) => [tr.id, tr]));
     const seen = new Set<string>();
+    // Clips that have ended but stay frozen on their last frame under an incoming transition.
+    const held = new Map(renderItems(project, t).filter((i) => i.held).map((i) => [i.clip.id, i.localTime]));
     for (const clip of project.clips) {
       if (!hasSound(clip) || !clip.mediaId) continue;
       const rt = runtime[clip.mediaId];
-      const near = t >= clip.start - PREROLL && t < clipEnd(clip);
+      const heldAt = held.get(clip.id);
+      const near = (t >= clip.start - PREROLL && t < clipEnd(clip)) || heldAt !== undefined;
       if (!rt || !near) continue;
       seen.add(clip.id);
       const el = this.element(clip, rt.url);
       const media = getMedia(project, clip.mediaId);
-      const inside = t >= clip.start;
-      const target = clamp(clip.offset + (t - clip.start) * clip.speed, 0, Math.max(0, (media?.duration ?? 0) - 0.01));
+      const inside = t >= clip.start && heldAt === undefined;
+      const target = clamp(clip.offset + (heldAt ?? t - clip.start) * clip.speed, 0, Math.max(0, (media?.duration ?? 0) - 0.01));
       if (playing && inside) {
         const track = tracks.get(clip.trackId);
         el.playbackRate = clip.speed;
@@ -105,7 +108,7 @@ class PreviewEngine {
         }
       } else {
         if (!el.paused) el.pause();
-        const want = inside ? target : clip.offset;
+        const want = inside || heldAt !== undefined ? target : clip.offset;
         if (!el.seeking && Math.abs(el.currentTime - want) > 0.001) el.currentTime = want;
       }
     }
@@ -125,7 +128,7 @@ class PreviewEngine {
 
   private draw() {
     if (!this.canvas || !this.ctx) return;
-    const { project, runtime, playhead, playing } = useStore.getState();
+    const { project, runtime, playhead, playing, selection } = useStore.getState();
     if (this.canvas.width !== project.width || this.canvas.height !== project.height) {
       this.canvas.width = project.width;
       this.canvas.height = project.height;
@@ -139,9 +142,15 @@ class PreviewEngine {
       }
       const el = this.elements.get(clip.id)?.el as HTMLVideoElement | undefined;
       return el && el.readyState >= 2 ? el : null;
-    });
+    }, { bypassZoomId: editingZoomId(project, selection, playing) });
     if (playing) this.dirty = true;
   }
+}
+
+/** While a zoom clip is selected and paused, the preview shows the un-zoomed frame so its area can be adjusted. */
+export function editingZoomId(project: Project, selection: string[], playing: boolean): string | undefined {
+  if (playing || selection.length !== 1) return undefined;
+  return getClip(project, selection[0])?.type === 'zoom' ? selection[0] : undefined;
 }
 
 export const preview = new PreviewEngine();

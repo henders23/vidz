@@ -25,7 +25,11 @@ export interface Track {
   locked: boolean;
 }
 
-export type ClipType = 'video' | 'audio' | 'image' | 'text' | 'shape';
+/**
+ * `zoom` and `effect` clips are adjustment layers: they draw nothing themselves
+ * but change how everything on the tracks beneath them is rendered.
+ */
+export type ClipType = 'video' | 'audio' | 'image' | 'text' | 'shape' | 'zoom' | 'effect';
 
 export interface TextProps {
   content: string;
@@ -41,7 +45,7 @@ export interface TextProps {
   outlineWidth: number;
 }
 
-export type ShapeKind = 'rect' | 'ellipse' | 'arrow';
+export type ShapeKind = 'rect' | 'ellipse' | 'arrow' | 'pulse';
 
 export interface ShapeProps {
   kind: ShapeKind;
@@ -52,6 +56,25 @@ export interface ShapeProps {
   stroke: string;
   strokeWidth: number;
   radius: number;
+}
+
+export type EffectKind = 'blur' | 'pixelate' | 'spotlight';
+
+export interface EffectProps {
+  kind: EffectKind;
+  region: 'rect' | 'ellipse';
+  width: number;
+  height: number;
+  /** Blur radius (px), pixel block size (px), or spotlight dimming (0..1). */
+  amount: number;
+}
+
+export type TransitionType = 'dissolve' | 'wipe' | 'push' | 'zoom' | 'dip';
+
+/** How a clip enters. If another clip ends exactly where this one starts, it is blended with that clip. */
+export interface Transition {
+  type: TransitionType;
+  duration: number;
 }
 
 export interface Filters {
@@ -73,7 +96,11 @@ export interface Clip {
   /** Where in the source the clip begins, seconds. */
   offset: number;
   speed: number;
-  /** Offset of the clip's centre from the canvas centre, in canvas pixels. */
+  /**
+   * Offset of the clip's centre from the canvas centre, in canvas pixels.
+   * For zoom clips, x/y is the centre of the zoomed area and `scale` is the
+   * fraction of the canvas it covers (0.5 = 2x zoom); fades are the ease in/out.
+   */
   x: number;
   y: number;
   scale: number;
@@ -85,6 +112,8 @@ export interface Clip {
   filters: Filters;
   text?: TextProps;
   shape?: ShapeProps;
+  effect?: EffectProps;
+  transition?: Transition;
 }
 
 export interface Project {
@@ -103,3 +132,5 @@ export interface Project {
 export const isVisual = (c: Clip) => c.type !== 'audio';
 export const hasSound = (c: Clip) => c.type === 'video' || c.type === 'audio';
 export const clipEnd = (c: Clip) => c.start + c.duration;
+export const isOverlay = (type: ClipType) => type === 'text' || type === 'shape' || type === 'zoom' || type === 'effect';
+export const canTransition = (c: Clip) => c.type === 'video' || c.type === 'image' || c.type === 'text' || c.type === 'shape';

@@ -104,3 +104,55 @@ describe('delete / move / speed', () => {
     expect(edit.fadeFactor(clip, 9.5)).toBeCloseTo(0.25);
   });
 });
+
+describe('tutorial tools', () => {
+  it('zoom clips land above footage and transform the layers below', () => {
+    const { p, id } = add(setup(), 'v', 0);
+    const z = edit.addZoomClip(p, { start: 1 });
+    const zoom = edit.getClip(z.project, z.clipId)!;
+    const order = z.project.tracks.map((t) => t.id);
+    expect(order.indexOf(zoom.trackId)).toBeLessThan(order.indexOf(edit.getClip(p, id)!.trackId));
+
+    const project = edit.updateClip(z.project, zoom.id, { x: 480, y: 270, scale: 0.5 });
+    const below = edit.getClip(project, id)!.trackId;
+    // Fully zoomed in: the chosen area (centre 1440,810; half-size 480x270) fills the 1920x1080 frame.
+    const view = edit.zoomTransform(project, 3, below);
+    expect(view.k).toBeCloseTo(2);
+    expect(view.k * 960 + view.tx).toBeCloseTo(0);
+    expect(view.k * 1920 + view.tx).toBeCloseTo(1920);
+    expect(view.k * 1080 + view.ty).toBeCloseTo(1080);
+    // Outside the zoom, at its very start, and for the zoom's own track: untouched.
+    expect(edit.zoomTransform(project, 0.5, below)).toEqual({ k: 1, tx: 0, ty: 0 });
+    expect(edit.zoomTransform(project, 1, below).k).toBeCloseTo(1);
+    expect(edit.zoomTransform(project, 3, zoom.trackId).k).toBe(1);
+    expect(edit.zoomTransform(project, 3, below, zoom.id).k).toBe(1);
+  });
+
+  it('keeps the zoom area inside the canvas', () => {
+    const z = edit.addZoomClip(setup(), { start: 0 });
+    const clip = { ...edit.getClip(z.project, z.clipId)!, x: 5000, y: -5000, scale: 0.5 };
+    expect(edit.zoomCentre(clip, z.project)).toEqual({ x: 480, y: -270 });
+  });
+
+  it('holds the previous clip on screen during a transition', () => {
+    const first = add(setup(), 'v', 0);
+    const trackId = edit.getClip(first.p, first.id)!.trackId;
+    const second = add(first.p, 'v', 10, trackId);
+    const p = edit.setTransition(second.p, second.id, 'dissolve', 1);
+    const during = edit.renderItems(p, 10.5);
+    expect(during.map((i) => [i.clip.id, i.held, i.transition?.role])).toEqual([[first.id, true, 'out'], [second.id, false, 'in']]);
+    expect(during[1].transition!.progress).toBeCloseTo(0.5);
+    expect(during[0].localTime).toBeCloseTo(10 - 1 / 30);
+    expect(edit.renderItems(p, 11.5).map((i) => i.clip.id)).toEqual([second.id]);
+    expect(edit.renderItems(p, 9).map((i) => i.clip.id)).toEqual([first.id]);
+    // Removing it, or splitting, never leaves a transition on the second half.
+    expect(edit.getClip(edit.setTransition(p, second.id, null), second.id)!.transition).toBeUndefined();
+    const halves = edit.splitClip(p, second.id, 15).clips.filter((c) => c.start >= 10).sort((a, b) => a.start - b.start);
+    expect(halves.map((c) => !!c.transition)).toEqual([true, false]);
+  });
+
+  it('does not allow transitions on adjustment layers', () => {
+    const fx = edit.addEffectClip(setup(), 'blur', { start: 0 });
+    expect(edit.setTransition(fx.project, fx.clipId, 'wipe')).toBe(fx.project);
+  });
+});

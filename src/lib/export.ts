@@ -13,7 +13,7 @@ import {
   getFirstEncodableVideoCodec,
 } from 'mediabunny';
 import { Clip, Project, clipEnd, hasSound } from '../types';
-import { getMedia, projectDuration, visibleClips } from './edit';
+import { RenderItem, getMedia, projectDuration, renderItems } from './edit';
 import { MediaRuntime, decodeAudio, seekTo } from './media';
 import { drawFrame } from './render';
 import { clamp } from './util';
@@ -76,15 +76,15 @@ class FrameSources {
   private images = new Map<string, ImageBitmap>();
   constructor(private project: Project, private runtime: Record<string, MediaRuntime>) {}
 
-  async prepare(clips: Clip[], time: number) {
-    const active = new Set(clips.map((c) => c.id));
+  async prepare(items: RenderItem[]) {
+    const active = new Set(items.map((i) => i.clip.id));
     for (const [id, el] of this.videos) {
       if (active.has(id)) continue;
       el.removeAttribute('src');
       el.load();
       this.videos.delete(id);
     }
-    for (const clip of clips) {
+    for (const { clip, localTime } of items) {
       const rt = clip.mediaId ? this.runtime[clip.mediaId] : undefined;
       if (!rt) continue;
       if (clip.type === 'image' && !this.images.has(clip.mediaId!)) {
@@ -104,7 +104,7 @@ class FrameSources {
           this.videos.set(clip.id, el);
         }
         const length = getMedia(this.project, clip.mediaId)?.duration ?? el.duration;
-        await seekTo(el, clamp(clip.offset + (time - clip.start) * clip.speed, 0, Math.max(0, length - 0.001)));
+        await seekTo(el, clamp(clip.offset + localTime * clip.speed, 0, Math.max(0, length - 0.001)));
       }
     }
   }
@@ -169,7 +169,7 @@ export async function exportProject(
     for (let i = 0; i < frames; i++) {
       if (signal.aborted) throw new DOMException('Export cancelled', 'AbortError');
       const time = i / options.fps;
-      await sources.prepare(visibleClips(project, time), time);
+      await sources.prepare(renderItems(project, time));
       ctx.setTransform(width / project.width, 0, 0, height / project.height, 0, 0);
       drawFrame(ctx, project, time, sources.lookup);
       await videoSource.add(time, 1 / options.fps);

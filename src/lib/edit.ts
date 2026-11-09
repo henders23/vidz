@@ -3,7 +3,10 @@
  * Project without mutating its input, so they are trivially undoable, testable,
  * and safe to call from automation (the command layer / future AI editing).
  */
-import { Clip, ClipType, MediaAsset, Project, ShapeKind, Track, TrackKind, clipEnd, isVisual } from '../types';
+import {
+  Clip, ClipType, EffectKind, MediaAsset, Project, ShapeKind, Track, TrackKind, Transition, TransitionType, canTransition, clipEnd,
+  isOverlay, isVisual,
+} from '../types';
 import { clamp, uid } from './util';
 
 export const MIN_CLIP = 0.05;
@@ -102,7 +105,7 @@ function pickTrack(p: Project, type: ClipType, start: number, duration: number):
   let candidates = p.tracks.filter(usable);
   if (kind === 'video') {
     candidates = candidates.reverse(); // bottom-most first
-    if (type === 'text' || type === 'shape') {
+    if (isOverlay(type)) {
       const topBusy = p.tracks.findIndex((t) => t.kind === 'video' && !isFree(p, t.id, start, duration));
       if (topBusy !== -1) candidates = candidates.filter((t) => p.tracks.indexOf(t) < topBusy);
     }
@@ -155,19 +158,59 @@ export function addTextClip(p: Project, at: Placement, content = 'Your text here
 }
 
 export function addShapeClip(p: Project, kind: ShapeKind, at: Placement): { project: Project; clipId: string } {
-  const placed = place(p, 'shape', DEFAULT_STILL_DURATION, at);
-  const clip = makeClip('shape', placed.trackId, placed.start, DEFAULT_STILL_DURATION);
+  const duration = kind === 'pulse' ? 1.8 : DEFAULT_STILL_DURATION;
+  const placed = place(p, 'shape', duration, at);
+  const clip = makeClip('shape', placed.trackId, placed.start, duration);
   const unit = p.height / 10;
-  clip.shape = {
+  if (kind === 'pulse') {
+    clip.shape = { kind, width: unit * 2, height: unit * 2, fill: '', stroke: '#ffd23d', strokeWidth: Math.round(unit / 8), radius: 0 };
+  } else {
+    clip.shape = {
+      kind,
+      width: kind === 'arrow' ? unit * 4 : unit * 5,
+      height: kind === 'arrow' ? unit : unit * 3,
+      fill: kind === 'arrow' ? '#ff4d6d' : '',
+      stroke: '#ff4d6d',
+      strokeWidth: kind === 'arrow' ? 0 : Math.round(unit / 8),
+      radius: kind === 'rect' ? Math.round(unit / 5) : 0,
+    };
+  }
+  return { project: { ...placed.project, clips: [...placed.project.clips, clip] }, clipId: clip.id };
+}
+
+/** A zoom-and-pan: everything beneath it zooms into the chosen area, easing in and out. */
+export function addZoomClip(p: Project, at: Placement): { project: Project; clipId: string } {
+  const placed = place(p, 'zoom', 4, at);
+  const clip = makeClip('zoom', placed.trackId, placed.start, 4);
+  clip.scale = 0.5;
+  clip.fadeIn = 0.6;
+  clip.fadeOut = 0.6;
+  return { project: { ...placed.project, clips: [...placed.project.clips, clip] }, clipId: clip.id };
+}
+
+export const EFFECT_DEFAULT_AMOUNT: Record<EffectKind, number> = { blur: 24, pixelate: 24, spotlight: 0.7 };
+
+/** A blur / pixelate / spotlight region applied to everything beneath it. */
+export function addEffectClip(p: Project, kind: EffectKind, at: Placement): { project: Project; clipId: string } {
+  const placed = place(p, 'effect', DEFAULT_STILL_DURATION, at);
+  const clip = makeClip('effect', placed.trackId, placed.start, DEFAULT_STILL_DURATION);
+  const unit = p.height / 10;
+  clip.effect = {
     kind,
-    width: kind === 'arrow' ? unit * 4 : unit * 5,
-    height: kind === 'arrow' ? unit : unit * 3,
-    fill: kind === 'arrow' ? '#ff4d6d' : '',
-    stroke: '#ff4d6d',
-    strokeWidth: kind === 'arrow' ? 0 : Math.round(unit / 8),
-    radius: kind === 'rect' ? Math.round(unit / 5) : 0,
+    region: kind === 'spotlight' ? 'ellipse' : 'rect',
+    width: unit * (kind === 'spotlight' ? 4 : 5),
+    height: unit * (kind === 'spotlight' ? 4 : 2),
+    amount: EFFECT_DEFAULT_AMOUNT[kind],
   };
   return { project: { ...placed.project, clips: [...placed.project.clips, clip] }, clipId: clip.id };
+}
+
+/** Set (or with `type: null`, remove) the transition a clip enters with. */
+export function setTransition(p: Project, id: string, type: TransitionType | null, duration = 0.5): Project {
+  const clip = getClip(p, id);
+  if (!clip || !canTransition(clip)) return p;
+  const transition: Transition | undefined = type ? { type, duration: clamp(duration, 0.1, Math.min(5, clip.duration)) } : undefined;
+  return updateClip(p, id, { transition });
 }
 
 export function updateClip(p: Project, id: string, patch: Partial<Clip>): Project {
@@ -223,6 +266,7 @@ export function splitClip(p: Project, id: string, time: number): Project {
     duration: clip.duration - firstDuration,
     offset: clip.type === 'video' || clip.type === 'audio' ? clip.offset + firstDuration * clip.speed : 0,
     fadeIn: 0,
+    transition: undefined,
   };
   return { ...p, clips: p.clips.flatMap((c) => (c.id === id ? [first, second] : [c])) };
 }
@@ -291,4 +335,88 @@ export function visibleClips(p: Project, time: number): Clip[] {
   return p.clips
     .filter((c) => isVisual(c) && !hidden.has(c.trackId) && time >= c.start && time < clipEnd(c))
     .sort((a, b) => order.get(b.trackId)! - order.get(a.trackId)!);
+}
+
+const ADJACENT = 0.02;
+const ease = (t: number) => t * t * (3 - 2 * t);
+
+export interface RenderItem {
+  clip: Clip;
+  /** Seconds since the clip's start (clamped to its last frame while held). */
+  localTime: number;
+  /** True for a finished clip kept on screen while the next clip transitions over it. */
+  held: boolean;
+  transition?: { type: TransitionType; progress: number; role: 'in' | 'out' };
+}
+
+/** Everything to draw at `time`, bottom layer first, including transition state. */
+export function renderItems(p: Project, time: number): RenderItem[] {
+  const order = new Map(p.tracks.map((t, i) => [t.id, i]));
+  const hidden = new Set(p.tracks.filter((t) => t.hidden).map((t) => t.id));
+  const items: RenderItem[] = [];
+  for (const clip of p.clips) {
+    if (!isVisual(clip) || hidden.has(clip.trackId) || time < clip.start || time >= clipEnd(clip)) continue;
+    const item: RenderItem = { clip, localTime: time - clip.start, held: false };
+    const tr = canTransition(clip) ? clip.transition : undefined;
+    if (tr && item.localTime < tr.duration) {
+      const progress = ease(clamp(item.localTime / tr.duration, 0, 1));
+      item.transition = { type: tr.type, progress, role: 'in' };
+      const previous = p.clips.find(
+        (c) => c.trackId === clip.trackId && c.id !== clip.id && canTransition(c) && Math.abs(clipEnd(c) - clip.start) < ADJACENT,
+      );
+      if (previous) {
+        items.push({
+          clip: previous,
+          localTime: Math.max(0, previous.duration - 1 / p.fps),
+          held: true,
+          transition: { type: tr.type, progress, role: 'out' },
+        });
+      }
+    }
+    items.push(item);
+  }
+  return items.sort((a, b) => order.get(b.clip.trackId)! - order.get(a.clip.trackId)! || a.clip.start - b.clip.start);
+}
+
+/** Centre of a zoom clip's target area, kept inside the canvas. */
+export function zoomCentre(clip: Clip, p: Project): { x: number; y: number } {
+  const s = clamp(clip.scale, 0.05, 1);
+  const mx = (p.width / 2) * (1 - s);
+  const my = (p.height / 2) * (1 - s);
+  return { x: clamp(clip.x, -mx, mx), y: clamp(clip.y, -my, my) };
+}
+
+/** Uniform scale + translation mapping canvas coordinates to on-screen coordinates. */
+export interface ViewTransform {
+  k: number;
+  tx: number;
+  ty: number;
+}
+
+/**
+ * Combined effect of every zoom clip above `trackId` at `time`.
+ * `bypassId` leaves one zoom clip out (used while its target area is being edited).
+ */
+export function zoomTransform(p: Project, time: number, trackId: string, bypassId?: string): ViewTransform {
+  const view: ViewTransform = { k: 1, tx: 0, ty: 0 };
+  const cx = p.width / 2;
+  const cy = p.height / 2;
+  for (const track of p.tracks) {
+    if (track.id === trackId) break;
+    if (track.hidden) continue;
+    for (const clip of p.clips) {
+      if (clip.type !== 'zoom' || clip.trackId !== track.id || clip.id === bypassId || time < clip.start || time >= clipEnd(clip)) continue;
+      const progress = ease(fadeFactor(clip, time));
+      const centre = zoomCentre(clip, p);
+      const size = 1 + (clamp(clip.scale, 0.05, 1) - 1) * progress;
+      const kz = 1 / size;
+      // screen = kz * (pt - (canvasCentre + focus)) + canvasCentre, composed onto the zooms above.
+      const tzx = cx - kz * (cx + centre.x * progress);
+      const tzy = cy - kz * (cy + centre.y * progress);
+      view.tx += view.k * tzx;
+      view.ty += view.k * tzy;
+      view.k *= kz;
+    }
+  }
+  return view;
 }

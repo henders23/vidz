@@ -21,6 +21,12 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 - **Timeline** – unlimited video/audio tracks, drag to move, trim handles, split, ripple delete, duplicate, snapping (hold Alt to disable), zoom, track mute/hide/lock, full undo/redo.
 - **Preview** – real-time composited playback; click, drag and resize clips directly on the canvas with centre guides.
 - **Properties** – position, scale, rotation, opacity, volume, speed, fades, colour filters; text styling; rectangle / ellipse / arrow callouts.
+- **Tutorial tools**
+  - *Zoom & pan* – drop a zoom clip on the timeline and drag a box over the area to zoom into; it eases in and out.
+  - *Blur / pixelate* – cover sensitive information with a resizable region.
+  - *Spotlight* – dim everything except the area you want people to look at.
+  - *Click pulse* – an animated ring to mark a click or a spot.
+  - *Transitions* – cross dissolve, wipe, push, zoom and fade-through between clips.
 - **Export** – frame-accurate MP4 (or WebM) at a chosen resolution, frame rate and quality, with mixed audio.
 - **Autosave** – the project and its media are stored in the browser (IndexedDB) and restored on reload.
 - **Command palette** (`Ctrl/Cmd+K`) and keyboard shortcuts (`?`).
@@ -40,6 +46,13 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 | `src/store.ts` | Zustand store: project, selection, playhead, undo history, autosave. |
 | `src/components/` | React UI. |
 
+### Adjustment layers
+
+Zoom and effect (blur / pixelate / spotlight) clips draw nothing themselves: they change how every
+track *beneath* them is rendered. That keeps them ordinary timeline clips (move, trim, split, fade,
+undo) and means a callout placed on a track above a zoom stays fixed on screen while the footage
+below zooms.
+
 ### Built for AI editing
 
 Every edit is a serialisable command against a JSON project, which is exactly the shape an AI agent
@@ -58,5 +71,5 @@ touching the editor core.
 ## Roadmap
 
 1. AI assistant: chat-driven editing on top of the command layer, transcription, captions, silence and filler-word removal.
-2. Tutorial tools: zoom-and-pan keyframes, cursor highlighting, blur/redact regions, transitions between clips.
+2. Keyframed motion (so a spotlight or blur can follow a moving target) and automatic cursor effects.
 3. Faster export (WebCodecs decoding instead of per-frame seeking), multiple projects, optional desktop build.

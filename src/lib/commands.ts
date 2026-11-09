@@ -4,7 +4,7 @@
  * shortcuts, the command palette and `window.vidz` all go through here, which
  * is also the surface an AI agent will use to edit a project.
  */
-import { Clip, Project, ShapeKind, clipEnd } from '../types';
+import { Clip, EffectKind, Project, ShapeKind, TransitionType, canTransition, clipEnd } from '../types';
 import { useStore } from '../store';
 import * as edit from './edit';
 import { kindOf } from './media';
@@ -61,6 +61,19 @@ function insert(fn: (p: Project) => { project: Project; clipId: string | null })
 }
 
 const addShape = (kind: ShapeKind) => insert((p) => edit.addShapeClip(p, kind, { start: s().playhead }));
+const addEffect = (kind: EffectKind) => insert((p) => edit.addEffectClip(p, kind, { start: s().playhead }));
+
+/** Give a clip a cross-dissolve: the selected clip, or else the top-most clip under the playhead. */
+function addTransition() {
+  const { project, selection, playhead } = s();
+  const selected = selection.length === 1 ? edit.getClip(project, selection[0]) : undefined;
+  const target = selected && canTransition(selected) ? selected : edit.visibleClips(project, playhead).reverse().find(canTransition);
+  if (!target) return s().toast('Select a clip to add a transition to');
+  if (!target.transition) s().commit((p) => edit.setTransition(p, target.id, 'dissolve'));
+  s().select([target.id]);
+  s().setPlayhead(target.start);
+  s().toast('Transition added at the start of the clip. Change its style in Properties.');
+}
 
 function zoomToFit() {
   const duration = edit.projectDuration(s().project);
@@ -143,6 +156,12 @@ export const commands: Command[] = [
   { id: 'insert.rect', title: 'Add rectangle', description: 'Add a rectangle highlight at the playhead.', run: () => addShape('rect') },
   { id: 'insert.ellipse', title: 'Add ellipse', description: 'Add an ellipse highlight at the playhead.', run: () => addShape('ellipse') },
   { id: 'insert.arrow', title: 'Add arrow', description: 'Add an arrow callout at the playhead.', run: () => addShape('arrow') },
+  { id: 'insert.zoom', title: 'Add zoom', description: 'Zoom and pan into an area of the video at the playhead.', shortcut: 'Z', run: () => insert((p) => edit.addZoomClip(p, { start: s().playhead })) },
+  { id: 'insert.blur', title: 'Add blur', description: 'Blur a region to hide sensitive information.', shortcut: 'B', run: () => addEffect('blur') },
+  { id: 'insert.pixelate', title: 'Add pixelate', description: 'Pixelate a region to hide sensitive information.', run: () => addEffect('pixelate') },
+  { id: 'insert.spotlight', title: 'Add spotlight', description: 'Dim everything except a highlighted region.', shortcut: 'L', run: () => addEffect('spotlight') },
+  { id: 'insert.pulse', title: 'Add click pulse', description: 'Add an animated ring that draws attention to a click or a spot.', shortcut: 'P', run: () => addShape('pulse') },
+  { id: 'clip.addTransition', title: 'Add transition', description: 'Add a transition into the selected clip (or the clip under the playhead).', shortcut: 'X', run: addTransition },
   { id: 'track.addVideo', title: 'Add video track', description: 'Add a new video/overlay track on top.', run: () => s().commit((p) => edit.addTrack(p, 'video').project) },
   { id: 'track.addAudio', title: 'Add audio track', description: 'Add a new audio track.', run: () => s().commit((p) => edit.addTrack(p, 'audio').project) },
 
@@ -179,7 +198,7 @@ export const commands: Command[] = [
   {
     id: 'clip.update',
     title: 'Update clip properties',
-    description: 'Patch any clip properties (x, y, scale, rotation, opacity, volume, fadeIn, fadeOut, filters, text, shape).',
+    description: 'Patch any clip properties (x, y, scale, rotation, opacity, volume, fadeIn, fadeOut, filters, text, shape, effect).',
     params: { type: 'object', properties: { clipId: str, patch: { type: 'object' } }, required: ['clipId', 'patch'] },
     run: ({ clipId, patch }) => s().commit((p) => edit.updateClip(p, String(clipId), patch as Partial<Clip>)),
   },
@@ -210,6 +229,54 @@ export const commands: Command[] = [
     description: 'Change the playback speed of a video or audio clip (0.1 - 8).',
     params: { type: 'object', properties: { clipId: str, speed: num }, required: ['clipId', 'speed'] },
     run: ({ clipId, speed }) => s().commit((p) => edit.setClipSpeed(p, String(clipId), Number(speed))),
+  },
+  {
+    id: 'clip.setTransition',
+    title: 'Set clip transition',
+    description: 'Set how a clip enters: dissolve, wipe, push, zoom or dip. Pass type "none" to remove it.',
+    params: {
+      type: 'object',
+      properties: { clipId: str, type: { enum: ['dissolve', 'wipe', 'push', 'zoom', 'dip', 'none'] }, duration: num },
+      required: ['clipId', 'type'],
+    },
+    run: ({ clipId, type, duration }) =>
+      s().commit((p) => edit.setTransition(p, String(clipId), type === 'none' ? null : (type as TransitionType), Number(duration ?? 0.5))),
+  },
+  {
+    id: 'timeline.addZoom',
+    title: 'Add zoom at time',
+    description: 'Zoom into an area. x/y are the centre of the area as an offset from the canvas centre in pixels; level is the magnification (2 = 2x).',
+    params: { type: 'object', properties: { start: num, duration: num, level: num, x: num, y: num }, required: ['start'] },
+    run: ({ start, duration, level, x, y }) => {
+      const id = insert((p) => edit.addZoomClip(p, { start: Number(start) }));
+      if (id) s().mutate((p) => edit.updateClip(p, id, { duration: Number(duration ?? 4), scale: 1 / Math.max(1, Number(level ?? 2)), x: Number(x ?? 0), y: Number(y ?? 0) }));
+      return id;
+    },
+  },
+  {
+    id: 'timeline.addEffect',
+    title: 'Add effect region at time',
+    description: 'Add a blur, pixelate or spotlight region. x/y are the centre offset from the canvas centre in pixels.',
+    params: {
+      type: 'object',
+      properties: { kind: { enum: ['blur', 'pixelate', 'spotlight'] }, start: num, duration: num, x: num, y: num, width: num, height: num },
+      required: ['kind', 'start'],
+    },
+    run: ({ kind, start, duration, x, y, width, height }) => {
+      const id = insert((p) => edit.addEffectClip(p, kind as EffectKind, { start: Number(start) }));
+      if (id) {
+        s().mutate((p) => {
+          const clip = edit.getClip(p, id)!;
+          return edit.updateClip(p, id, {
+            duration: Number(duration ?? clip.duration),
+            x: Number(x ?? 0),
+            y: Number(y ?? 0),
+            effect: { ...clip.effect!, width: Number(width ?? clip.effect!.width), height: Number(height ?? clip.effect!.height) },
+          });
+        });
+      }
+      return id;
+    },
   },
   {
     id: 'clip.delete',
