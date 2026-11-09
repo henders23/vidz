@@ -1,10 +1,12 @@
-import { AlignCenter, AlignLeft, AlignRight, Bold, Captions, ChevronLeft, ChevronRight, Diamond, Italic, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Bold, Captions, ChevronLeft, ChevronRight, Crosshair, Diamond, Italic, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { Assistant } from './Assistant';
 import { Transcript } from './Transcript';
 import { Clip, EffectKind, EffectProps, Filters, Project, ShapeProps, TextProps, TransitionType, canTransition } from '../types';
 import { armHistory, liveEdit, useStore } from '../store';
 import * as edit from '../lib/edit';
 import { clipSize } from '../lib/render';
+import { invokeCommand } from '../lib/commands';
+import { cancelTracking } from '../lib/smart';
 import { formatTime } from '../lib/util';
 
 const FONTS = [
@@ -296,6 +298,7 @@ const TRANSFORM_KEYS = new Set(['x', 'y', 'scale', 'rotation', 'opacity']);
 
 function AnimationSection({ clip, project }: { clip: Clip; project: Project }) {
   const playhead = useStore((s) => s.playhead);
+  const tracking = useStore((s) => s.tracking);
   const { setPlayhead, commit, toast } = useStore.getState();
   const kfs = clip.keyframes ?? [];
   const local = playhead - clip.start;
@@ -320,8 +323,22 @@ function AnimationSection({ clip, project }: { clip: Clip; project: Project }) {
         )}
         <button className="icon-btn boxed" title="Next keyframe" aria-label="Next keyframe" disabled={!next} onClick={() => next && setPlayhead(clip.start + next.k.time)}><ChevronRight size={15} /></button>
       </div>
+      {clip.type !== 'zoom' && (
+        tracking !== null ? (
+          <div className="track-progress" role="status">
+            <div className="bar"><div style={{ width: `${tracking * 100}%` }} /></div>
+            <button className="btn small" onClick={cancelTracking}>Cancel</button>
+          </div>
+        ) : (
+          <div className="insp-buttons">
+            <button className="btn small" disabled={!inside} title="Follow whatever is under this clip, from the playhead to the end of the clip" onClick={() => invokeCommand('clip.track', { clipId: clip.id })}>
+              <Crosshair size={13} /> Track motion
+            </button>
+          </div>
+        )
+      )}
       {kfs.length === 0 ? (
-        <p className="insp-hint">Add a keyframe, move the playhead, then move or resize the clip in the preview. It animates between the two, so it can follow something that moves.</p>
+        <p className="insp-hint">To follow something automatically, place this clip over it and choose Track motion. To animate by hand: add a keyframe, move the playhead, then move or resize the clip in the preview.</p>
       ) : (
         <>
           <div className="kf-chips">

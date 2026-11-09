@@ -257,6 +257,23 @@ export const commands: Command[] = [
     },
   },
   {
+    id: 'clip.track',
+    title: 'Track motion',
+    description:
+      'Make a clip automatically follow whatever is underneath it (for example keep a blur on a face or a spotlight on the cursor). Position the clip over the target first; it is tracked from `start` (default: the playhead) to the end of the clip and position keyframes are written. Returns lostAt if the target could not be followed all the way.',
+    params: { type: 'object', properties: { clipId: str, start: num } },
+    run: async ({ clipId, start }) => {
+      const id = (clipId as string | undefined) ?? (s().selection.length === 1 ? s().selection[0] : undefined);
+      if (!id) throw new Error('Select the clip that should follow something first');
+      try {
+        return await smart.trackClip(id, start === undefined ? undefined : Number(start));
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return { message: 'Tracking cancelled' };
+        throw err;
+      }
+    },
+  },
+  {
     id: 'clip.setKeyframes',
     title: 'Set clip animation',
     description:

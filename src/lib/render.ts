@@ -222,6 +222,8 @@ function filterString(clip: Clip): string {
 export interface DrawOptions {
   /** Ignore this zoom clip, so its target area can be edited against the un-zoomed frame. */
   bypassZoomId?: string;
+  /** Draw only what lies on tracks beneath this one (what a clip on this track sits on top of). */
+  belowTrackId?: string;
 }
 
 /**
@@ -235,12 +237,15 @@ export function drawFrame(ctx: Ctx, project: Project, time: number, lookup: Sour
   ctx.beginPath();
   ctx.rect(0, 0, project.width, project.height);
   ctx.clip();
+  const order = new Map(project.tracks.map((t, i) => [t.id, i]));
+  const limit = options.belowTrackId ? order.get(options.belowTrackId) ?? -1 : -1;
   for (const item of renderItems(project, time)) {
+    if (order.get(item.clip.trackId)! <= limit) continue;
     if (item.clip.type === 'zoom') continue; // applied to the layers beneath via zoomTransform
     // Apply keyframed motion. A held clip stays where its animation left it.
     const clip = resolveClip(item.clip, item.clip.start + item.localTime);
     ctx.save();
-    const view = zoomTransform(project, time, clip.trackId, options.bypassZoomId);
+    const view = zoomTransform(project, time, clip.trackId, options.bypassZoomId, options.belowTrackId);
     ctx.translate(view.tx, view.ty);
     ctx.scale(view.k, view.k);
     let alpha = clip.opacity * (item.held ? 1 : fadeFactor(clip, time));

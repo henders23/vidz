@@ -393,3 +393,7 @@ kbd {
 .kf-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .kf-chips button { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; font: 11px ui-monospace, 'SF Mono', Consolas, monospace; color: var(--muted); }
 .kf-chips button.on { border-color: var(--accent); color: var(--text); background: #1b1830; }
+
+.track-progress { display: flex; align-items: center; gap: 8px; }
+.track-progress .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
+.track-progress .bar div { height: 100%; background: var(--accent); }

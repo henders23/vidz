@@ -28,6 +28,7 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
   - *Click pulse* – an animated ring to mark a click or a spot.
   - *Transitions* – cross dissolve, wipe, push, zoom and fade-through between clips.
 - **Keyframed motion** – any clip can change position, size, rotation and opacity over time: press `K` to add a keyframe, move the playhead, then move or resize the clip. Blurs and spotlights can follow a moving target, zooms can pan, titles can slide in. Keyframes show as diamonds on the timeline and can be dragged to retime.
+- **Motion tracking** – place a blur, spotlight, shape or text over something, choose Track motion, and it follows that thing to the end of the clip by writing keyframes for you.
 - **AI assistant** – describe an edit in plain English and Claude carries it out on your timeline using the editor's own commands. It can read the transcript and look at frames, and each request is a single undo step. Needs your own Anthropic API key (Settings), which stays in your browser.
 - **Transcript tools** – speech is transcribed on your device with Whisper (nothing is uploaded). Generate captions, click a word to jump to it, or select words and cut them out of the video.
 - **Remove silences** – cuts silent pauses out of the whole timeline in one click. No AI or key needed.
@@ -49,6 +50,7 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 | `src/lib/recorder.ts` | Screen / camera / microphone capture. |
 | `src/lib/ai.ts` | The assistant: a streaming Claude tool-use loop whose tools are generated from the command registry. |
 | `src/lib/smart.ts` | Captions, silence removal, project summary and frame snapshots (used by the UI and as assistant tools). |
+| `src/lib/track.ts` | Motion tracking by template matching on small greyscale frames. |
 | `src/lib/transcribe.ts`, `whisper.worker.ts` | In-browser Whisper speech-to-text in a web worker. |
 | `src/store.ts` | Zustand store: project, selection, playhead, undo history, autosave. |
 | `src/components/` | React UI. |
@@ -82,6 +84,6 @@ for hosting vidz publicly with a shared key.
 
 ## Roadmap
 
-1. Automatic motion tracking (so a blur follows a target without manual keyframes) and automatic cursor effects.
+1. Automatic cursor effects, and tracking that also follows changes in size.
 2. Caption export (SRT/VTT), speaker labels, and faster transcription on WebGPU.
 3. Faster export (WebCodecs decoding instead of per-frame seeking), multiple projects, optional desktop build.

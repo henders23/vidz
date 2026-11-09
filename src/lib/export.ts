@@ -70,6 +70,13 @@ async function mixAudio(project: Project, runtime: Record<string, MediaRuntime>,
   return scheduled ? ctx.startRendering() : null;
 }
 
+/**
+ * Container timestamps are often rounded (WebM stores milliseconds), so asking for
+ * exactly a frame's nominal time can land a hair before it and return the previous
+ * frame. Nudging the request forward makes every frame come out exactly once.
+ */
+export const FRAME_BIAS = 0.002;
+
 /** Owns the decode elements used during export, independent of the live preview. */
 export class FrameSources {
   private videos = new Map<string, HTMLVideoElement>();
@@ -104,7 +111,7 @@ export class FrameSources {
           this.videos.set(clip.id, el);
         }
         const length = getMedia(this.project, clip.mediaId)?.duration ?? el.duration;
-        await seekTo(el, clamp(clip.offset + localTime * clip.speed, 0, Math.max(0, length - 0.001)));
+        await seekTo(el, clamp(clip.offset + localTime * clip.speed + FRAME_BIAS, 0, Math.max(0, length - 0.001)));
       }
     }
   }

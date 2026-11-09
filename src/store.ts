@@ -30,6 +30,8 @@ interface State {
   panel: 'properties' | 'assistant' | 'transcript';
   /** Progress of the running transcription, if any. */
   transcribing: null | { name: string; stage: TranscribeProgress['stage']; progress?: number };
+  /** Progress (0..1) of a running motion track, if any. */
+  tracking: null | number;
   toasts: Toast[];
 
   /** Apply an edit as a single undo step. */
@@ -71,6 +73,7 @@ export const useStore = create<State>((set, get) => ({
   dialog: null,
   panel: 'properties',
   transcribing: null,
+  tracking: null,
   toasts: [],
 
   commit: (fn) => {

@@ -402,12 +402,18 @@ export interface ViewTransform {
  * Combined effect of every zoom clip above `trackId` at `time`.
  * `bypassId` leaves one zoom clip out (used while its target area is being edited).
  */
-export function zoomTransform(p: Project, time: number, trackId: string, bypassId?: string): ViewTransform {
+export function zoomTransform(p: Project, time: number, trackId: string, bypassId?: string, belowTrackId?: string): ViewTransform {
   const view: ViewTransform = { k: 1, tx: 0, ty: 0 };
   const cx = p.width / 2;
   const cy = p.height / 2;
+  // With `belowTrackId`, zooms on that track and above are ignored.
+  let counting = !belowTrackId;
   for (const track of p.tracks) {
     if (track.id === trackId) break;
+    if (!counting) {
+      counting = track.id === belowTrackId;
+      continue;
+    }
     if (track.hidden) continue;
     for (const clip of p.clips) {
       if (clip.type !== 'zoom' || clip.trackId !== track.id || clip.id === bypassId || time < clip.start || time >= clipEnd(clip)) continue;
@@ -771,4 +777,19 @@ export function setKeyframes(p: Project, id: string, keyframes: (Partial<Keyfram
     .map((k) => ({ ...base, ...k, time: clamp(k.time - clip.start, 0, clip.duration) }))
     .sort((a, b) => a.time - b.time);
   return updateClip(p, id, { keyframes: built.length ? built : undefined, motion: motion ?? clip.motion });
+}
+
+/**
+ * Replace a clip's animation from `time` onwards with new position keyframes
+ * (timeline seconds), keeping earlier keyframes and the clip's size, rotation
+ * and opacity as they are at `time`.
+ */
+export function setPathFrom(p: Project, id: string, time: number, path: { time: number; x: number; y: number }[]): Project {
+  const clip = getClip(p, id);
+  if (!clip || !path.length) return p;
+  const from = time - clip.start;
+  const held = valuesAt(clip, from);
+  const earlier = (clip.keyframes ?? []).filter((k) => k.time < from - 0.5 / p.fps);
+  const tracked = path.map((pt) => ({ ...held, x: pt.x, y: pt.y, time: clamp(pt.time - clip.start, 0, clip.duration) }));
+  return updateClip(p, id, { keyframes: [...earlier, ...tracked].sort((a, b) => a.time - b.time), motion: 'linear' });
 }
