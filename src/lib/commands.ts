@@ -165,6 +165,16 @@ export const commands: Command[] = [
   { id: 'insert.pixelate', title: 'Add pixelate', description: 'Pixelate a region to hide sensitive information.', run: () => addEffect('pixelate') },
   { id: 'insert.spotlight', title: 'Add spotlight', description: 'Dim everything except a highlighted region.', shortcut: 'L', run: () => addEffect('spotlight') },
   { id: 'insert.pulse', title: 'Add click pulse', description: 'Add an animated ring that draws attention to a click or a spot.', shortcut: 'P', run: () => addShape('pulse') },
+  {
+    id: 'insert.cursorHighlight',
+    title: 'Add cursor highlight',
+    description: 'Add a soft highlight for the mouse cursor over the rest of the clip under the playhead. Returns the new clip id; set its x/y to the cursor position, then call clip_track to make it follow the cursor.',
+    shortcut: 'C',
+    run: () => {
+      const clipId = smart.addCursorHighlight();
+      return { clipId, message: 'Drag the highlight onto your cursor, then choose Track motion to make it follow.' };
+    },
+  },
   { id: 'clip.addTransition', title: 'Add transition', description: 'Add a transition into the selected clip (or the clip under the playhead).', shortcut: 'X', run: addTransition },
   { id: 'track.addVideo', title: 'Add video track', description: 'Add a new video/overlay track on top.', run: () => s().commit((p) => edit.addTrack(p, 'video').project) },
   { id: 'track.addAudio', title: 'Add audio track', description: 'Add a new audio track.', run: () => s().commit((p) => edit.addTrack(p, 'audio').project) },
@@ -261,12 +271,12 @@ export const commands: Command[] = [
     title: 'Track motion',
     description:
       'Make a clip automatically follow whatever is underneath it (for example keep a blur on a face or a spotlight on the cursor). Position the clip over the target first; it is tracked from `start` (default: the playhead) to the end of the clip and position keyframes are written. Returns lostAt if the target could not be followed all the way.',
-    params: { type: 'object', properties: { clipId: str, start: num } },
-    run: async ({ clipId, start }) => {
+    params: { type: 'object', properties: { clipId: str, start: num, followSize: { type: 'boolean', description: 'Also follow the target getting bigger or smaller.' } } },
+    run: async ({ clipId, start, followSize }) => {
       const id = (clipId as string | undefined) ?? (s().selection.length === 1 ? s().selection[0] : undefined);
       if (!id) throw new Error('Select the clip that should follow something first');
       try {
-        return await smart.trackClip(id, start === undefined ? undefined : Number(start));
+        return await smart.trackClip(id, { from: start === undefined ? undefined : Number(start), followSize: !!followSize });
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return { message: 'Tracking cancelled' };
         throw err;

@@ -15,6 +15,13 @@ export interface TrackPoint {
   /** Box centre, in the greyscale frame's pixels. */
   x: number;
   y: number;
+  /** Size of the target relative to when tracking started (1 = unchanged). */
+  scale: number;
+}
+
+export interface TrackOptions {
+  /** Also follow the target getting bigger or smaller (moving towards or away from the camera). */
+  followSize?: boolean;
 }
 
 export interface TrackResult {
@@ -38,6 +45,7 @@ const LOST_BELOW = 0.45;
 const ANCHOR_ABOVE = 0.6;
 const ADAPT_ABOVE = 0.75;
 const ADAPT_RATE = 0.15;
+const SIZE_STEP = 1.04;
 
 export function toGray(image: { data: Uint8ClampedArray; width: number; height: number }): Gray {
   const data = new Float32Array(image.width * image.height);
@@ -141,6 +149,9 @@ export function match(gray: Gray, template: Template, cx: number, cy: number, ra
   };
 }
 
+/** The same remembered picture, sampled as if the target were `scale` times its original size. */
+const scaled = (t: Template, scale: number): Template => ({ ...t, stepX: t.stepX * scale, stepY: t.stepY * scale });
+
 /**
  * Follow the contents of a box through `times`. `frameAt` supplies each frame;
  * the box starts centred on (x, y) at `times[0]`.
@@ -149,6 +160,7 @@ export async function track(
   frameAt: (time: number) => Promise<Gray>,
   times: number[],
   start: { x: number; y: number; width: number; height: number },
+  options: TrackOptions = {},
   onProgress?: (fraction: number) => void,
   signal?: AbortSignal,
 ): Promise<TrackResult> {
@@ -158,40 +170,176 @@ export async function track(
   const anchor = makeTemplate(first, start.x, start.y, start.width, start.height);
   const recent: Template = { ...anchor, samples: anchor.samples.slice() };
   const radius = Math.round(Math.min(48, Math.max(16, Math.max(start.width, start.height) * 0.75)));
-  const points: TrackPoint[] = [{ time: times[0], x: start.x, y: start.y }];
+  const points: TrackPoint[] = [{ time: times[0], x: start.x, y: start.y, scale: 1 }];
   const patch = new Float32Array(anchor.samples.length);
   let x = start.x;
   let y = start.y;
   let vx = 0;
   let vy = 0;
+  let scale = 1;
+  let sizeTrend = 0;
+
+  const find = (gray: Gray, cx: number, cy: number) => {
+    let found = match(gray, scaled(anchor, scale), cx, cy, radius);
+    if (found.score < ANCHOR_ABOVE) {
+      const fallback = match(gray, scaled(recent, scale), cx, cy, radius);
+      if (fallback.score > found.score) found = fallback;
+    }
+    return found;
+  };
   for (let i = 1; i < times.length; i++) {
     if (signal?.aborted) throw new DOMException('Tracking cancelled', 'AbortError');
     const gray = await frameAt(times[i]);
+    onProgress?.(i / (times.length - 1));
     // Look around where the target would be if it kept moving as it has been.
-    const px = Math.round(x + vx);
-    const py = Math.round(y + vy);
-    let found = match(gray, anchor, px, py, radius);
-    if (found.score < ANCHOR_ABOVE) {
-      const fallback = match(gray, recent, px, py, radius);
-      if (fallback.score > found.score) found = fallback;
-    }
+    const found = find(gray, Math.round(x + vx), Math.round(y + vy));
     if (found.score < LOST_BELOW) return { points, lostAt: times[i] };
     vx = found.x - x;
     vy = found.y - y;
     x = found.x;
     y = found.y;
-    points.push({ time: times[i], x, y });
+
+    if (options.followSize) {
+      // Would the target match better a little bigger or smaller? Try a few sizes (re-centring
+      // for each) and only change on a clear win, so a steady target does not jitter.
+      const reference = found.score >= ANCHOR_ABOVE ? anchor : recent;
+      // Compare like with like: the current size gets the same local re-centring as the others.
+      const same = match(gray, scaled(reference, scale), Math.round(x), Math.round(y), 2).score;
+      let best = { score: same, scale, x, y, direction: 0 };
+      for (const steps of [-2, -1, 1, 2]) {
+        const size = Math.min(4, Math.max(0.25, scale * SIZE_STEP ** steps));
+        const m = match(gray, scaled(reference, size), Math.round(x), Math.round(y), 2);
+        if (m.score > best.score) best = { score: m.score, scale: size, x: m.x, y: m.y, direction: Math.sign(steps) };
+      }
+      const direction = best.score > same + 0.02 ? best.direction : 0;
+      // Act only when two frames in a row agree, so noise in a single frame is ignored.
+      if (direction !== 0 && direction === sizeTrend) ({ scale, x, y } = best);
+      sizeTrend = direction;
+    }
+
+    points.push({ time: times[i], x, y, scale });
     if (found.score > ADAPT_ABOVE) {
-      sample(gray, Math.round(x), Math.round(y), recent, patch);
+      sample(gray, Math.round(x), Math.round(y), scaled(recent, scale), patch);
       for (let n = 0; n < patch.length; n++) recent.samples[n] += (patch[n] - recent.samples[n]) * ADAPT_RATE;
     }
-    onProgress?.(i / (times.length - 1));
   }
   return { points };
 }
 
-/** Drop points that lie on a straight, constant-speed path between their neighbours (Ramer-Douglas-Peucker). */
-export function simplify(points: TrackPoint[], tolerance: number): TrackPoint[] {
+const CHANGED = 18;
+
+/**
+ * Follow a mouse cursor through a screen recording by watching what moves. A
+ * cursor's picture cannot be matched directly, because whatever is behind it
+ * keeps changing; but on a mostly still screen, the cursor is the small thing
+ * that disappears from one place and appears in another.
+ *
+ * `start` is the cursor's centre and rough size at `times[0]`. Changes that are
+ * not the cursor leaving its spot (typing, a blinking caret, a video playing)
+ * are ignored, and the position simply holds.
+ */
+export async function trackCursor(
+  frameAt: (time: number) => Promise<Gray>,
+  times: number[],
+  start: { x: number; y: number; size: number },
+  onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<TrackResult> {
+  const size = start.size;
+  const reach = size * 0.8; // half-width of the area the cursor currently occupies
+  const cell = Math.max(2, Math.round(size / 2));
+  let previous = await frameAt(times[0]);
+  let x = start.x;
+  let y = start.y;
+  const points: TrackPoint[] = [{ time: times[0], x, y, scale: 1 }];
+
+  for (let i = 1; i < times.length; i++) {
+    if (signal?.aborted) throw new DOMException('Tracking cancelled', 'AbortError');
+    const gray = await frameAt(times[i]);
+    onProgress?.(i / (times.length - 1));
+    const { width, height } = gray;
+    const cols = Math.ceil(width / cell);
+    const rows = Math.ceil(height / cell);
+    const away = new Uint16Array(cols * rows); // changed pixels per cell, outside the cursor's current spot
+    let total = 0;
+    let here = 0;
+    let minX = width, maxX = -1, minY = height, maxY = -1;
+    for (let py = 0; py < height; py++) {
+      const row = py * width;
+      for (let px = 0; px < width; px++) {
+        if (Math.abs(gray.data[row + px] - previous.data[row + px]) <= CHANGED) continue;
+        total++;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+        if (Math.abs(px - x) <= reach && Math.abs(py - y) <= reach) here++;
+        else away[Math.floor(py / cell) * cols + Math.floor(px / cell)]++;
+      }
+    }
+    const elsewhere = total - here;
+    // Nothing moved, the whole screen changed (scrolling, a new window), or something
+    // changed while the cursor stayed put: in each case the cursor has not gone anywhere.
+    const moved = total > 0 && here > 0 && total < 40 * size * size;
+    if (moved && elsewhere < 0.2 * total) {
+      // A short hop: the changed area spans the old and new positions, so its middle is halfway.
+      const nx = minX + maxX + 1 - x;
+      const ny = minY + maxY + 1 - y;
+      if (Math.hypot(nx - x, ny - y) <= 2 * size) {
+        x = nx;
+        y = ny;
+      }
+    } else if (moved) {
+      // A longer move: find the cursor-sized block where most of the remaining change is.
+      let best = 0;
+      let bc = 0;
+      let br = 0;
+      for (let r = 0; r < rows - 1; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          const n = away[r * cols + c] + away[r * cols + c + 1] + away[(r + 1) * cols + c] + away[(r + 1) * cols + c + 1];
+          if (n > best) {
+            best = n;
+            bc = c;
+            br = r;
+          }
+        }
+      }
+      if (best >= 0.5 * elsewhere) {
+        // Measure the changed pixels in and just around that block.
+        const x0 = Math.max(0, (bc - 1) * cell);
+        const x1 = Math.min(width, (bc + 3) * cell);
+        const y0 = Math.max(0, (br - 1) * cell);
+        const y1 = Math.min(height, (br + 3) * cell);
+        let bx0 = x1, bx1 = -1, by0 = y1, by1 = -1;
+        for (let py = y0; py < y1; py++) {
+          for (let px = x0; px < x1; px++) {
+            if (Math.abs(px - x) <= reach && Math.abs(py - y) <= reach) continue;
+            if (Math.abs(gray.data[py * width + px] - previous.data[py * width + px]) <= CHANGED) continue;
+            if (px < bx0) bx0 = px;
+            if (px > bx1) bx1 = px;
+            if (py < by0) by0 = py;
+            if (py > by1) by1 = py;
+          }
+        }
+        // Ignore specks much smaller than a cursor (a typed character, a caret).
+        if (bx1 >= 0 && (bx1 - bx0 >= 0.3 * size || by1 - by0 >= 0.3 * size)) {
+          x = (bx0 + bx1 + 1) / 2;
+          y = (by0 + by1 + 1) / 2;
+        }
+      }
+    }
+    points.push({ time: times[i], x, y, scale: 1 });
+    previous = gray;
+  }
+  return { points };
+}
+
+/**
+ * Drop points that lie on a straight, constant-speed path between their neighbours
+ * (Ramer-Douglas-Peucker). `size` is the target's size in pixels, so that a change
+ * in scale counts as distance too.
+ */
+export function simplify(points: TrackPoint[], tolerance: number, size = 0): TrackPoint[] {
   if (points.length <= 2) return points;
   const keep = new Uint8Array(points.length);
   keep[0] = keep[points.length - 1] = 1;
@@ -204,7 +352,11 @@ export function simplify(points: TrackPoint[], tolerance: number): TrackPoint[] 
     let index = -1;
     for (let i = a + 1; i < b; i++) {
       const u = (points[i].time - pa.time) / (pb.time - pa.time);
-      const d = Math.hypot(points[i].x - (pa.x + (pb.x - pa.x) * u), points[i].y - (pa.y + (pb.y - pa.y) * u));
+      const d = Math.hypot(
+        points[i].x - (pa.x + (pb.x - pa.x) * u),
+        points[i].y - (pa.y + (pb.y - pa.y) * u),
+        (points[i].scale - (pa.scale + (pb.scale - pa.scale) * u)) * size,
+      );
       if (d > worst) {
         worst = d;
         index = i;

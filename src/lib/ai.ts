@@ -79,7 +79,7 @@ export function validate(schema: Schema, value: unknown, path = 'input'): string
 }
 
 const toolName = (id: string) => id.replace(/\./g, '_');
-const EXTRA_TOOLS = ['edit.undo'];
+const EXTRA_TOOLS = ['edit.undo', 'insert.cursorHighlight'];
 const toolCommands: Command[] = commands.filter((c) => c.params || EXTRA_TOOLS.includes(c.id));
 const byToolName = new Map(toolCommands.map((c) => [toolName(c.id), c]));
 

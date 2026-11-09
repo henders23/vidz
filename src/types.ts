@@ -45,7 +45,7 @@ export interface TextProps {
   outlineWidth: number;
 }
 
-export type ShapeKind = 'rect' | 'ellipse' | 'arrow' | 'pulse';
+export type ShapeKind = 'rect' | 'ellipse' | 'arrow' | 'pulse' | 'glow';
 
 export interface ShapeProps {
   kind: ShapeKind;

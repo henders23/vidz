@@ -177,6 +177,23 @@ function applyTransition(ctx: Ctx, project: Project, tr: NonNullable<RenderItem[
 function drawShape(ctx: Ctx, clip: Clip, localTime: number) {
   const s = clip.shape!;
   if (s.kind === 'pulse') return drawPulse(ctx, clip, localTime);
+  if (s.kind === 'glow') {
+    // A soft-edged highlight, used to make the mouse cursor easy to follow.
+    const r = Math.max(s.width, s.height) / 2;
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    const colour = s.fill || s.stroke;
+    gradient.addColorStop(0, colour);
+    gradient.addColorStop(0.6, colour);
+    gradient.addColorStop(1, 'transparent');
+    ctx.save();
+    ctx.scale(s.width / (2 * r), s.height / (2 * r));
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
   const w = s.width;
   const h = s.height;
   ctx.beginPath();

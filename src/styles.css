@@ -399,3 +399,6 @@ kbd {
 .track-progress .bar div { height: 100%; background: var(--accent); }
 
 .export-row span { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; margin-right: 2px; }
+
+.check { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.check input { accent-color: var(--accent); }

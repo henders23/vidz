@@ -158,12 +158,15 @@ export function addTextClip(p: Project, at: Placement, content = 'Your text here
   return { project: { ...placed.project, clips: [...placed.project.clips, clip] }, clipId: clip.id };
 }
 
-export function addShapeClip(p: Project, kind: ShapeKind, at: Placement): { project: Project; clipId: string } {
-  const duration = kind === 'pulse' ? 1.8 : DEFAULT_STILL_DURATION;
+export function addShapeClip(p: Project, kind: ShapeKind, at: Placement, length?: number): { project: Project; clipId: string } {
+  const duration = length ?? (kind === 'pulse' ? 1.8 : DEFAULT_STILL_DURATION);
   const placed = place(p, 'shape', duration, at);
   const clip = makeClip('shape', placed.trackId, placed.start, duration);
   const unit = p.height / 10;
-  if (kind === 'pulse') {
+  if (kind === 'glow') {
+    clip.shape = { kind, width: unit * 1.3, height: unit * 1.3, fill: '#ffd23d', stroke: '#ffd23d', strokeWidth: 0, radius: 0 };
+    clip.opacity = 0.55;
+  } else if (kind === 'pulse') {
     clip.shape = { kind, width: unit * 2, height: unit * 2, fill: '', stroke: '#ffd23d', strokeWidth: Math.round(unit / 8), radius: 0 };
   } else {
     clip.shape = {
@@ -784,12 +787,23 @@ export function setKeyframes(p: Project, id: string, keyframes: (Partial<Keyfram
  * (timeline seconds), keeping earlier keyframes and the clip's size, rotation
  * and opacity as they are at `time`.
  */
-export function setPathFrom(p: Project, id: string, time: number, path: { time: number; x: number; y: number }[]): Project {
+export function setPathFrom(p: Project, id: string, time: number, path: { time: number; x: number; y: number; scale?: number }[]): Project {
   const clip = getClip(p, id);
   if (!clip || !path.length) return p;
   const from = time - clip.start;
   const held = valuesAt(clip, from);
   const earlier = (clip.keyframes ?? []).filter((k) => k.time < from - 0.5 / p.fps);
-  const tracked = path.map((pt) => ({ ...held, x: pt.x, y: pt.y, time: clamp(pt.time - clip.start, 0, clip.duration) }));
+  // A change in the target's size resizes the region itself for effects and shapes, and scales other clips.
+  const boxed = held.width !== undefined && held.height !== undefined;
+  const tracked = path.map((pt) => {
+    const k = pt.scale ?? 1;
+    return {
+      ...held,
+      x: pt.x,
+      y: pt.y,
+      ...(boxed ? { width: held.width! * k, height: held.height! * k } : { scale: held.scale * k }),
+      time: clamp(pt.time - clip.start, 0, clip.duration),
+    };
+  });
   return updateClip(p, id, { keyframes: [...earlier, ...tracked].sort((a, b) => a.time - b.time), motion: 'linear' });
 }

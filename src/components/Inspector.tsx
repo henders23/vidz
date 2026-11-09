@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, Bold, Captions, ChevronLeft, ChevronRight, Crosshair, Diamond, Italic, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { Assistant } from './Assistant';
 import { Transcript } from './Transcript';
@@ -188,17 +189,18 @@ function ShapeSection({ clip, set }: { clip: Clip; set: (patch: Partial<Clip>) =
   const sh = clip.shape!;
   const setShape = (patch: Partial<ShapeProps>) => set({ shape: { ...sh, ...patch } });
   return (
-    <Section title={sh.kind === 'pulse' ? 'Click pulse' : 'Shape'}>
+    <Section title={sh.kind === 'pulse' ? 'Click pulse' : sh.kind === 'glow' ? 'Cursor highlight' : 'Shape'}>
       <Row label="Size">
         <NumberField value={sh.width} min={2} onChange={(v) => setShape({ width: Math.max(2, v) })} />
         <span className="times">×</span>
         <NumberField value={sh.height} min={2} onChange={(v) => setShape({ height: Math.max(2, v) })} />
       </Row>
-      {sh.kind !== 'pulse' && <Row label="Fill"><ColorField optional value={sh.fill} onChange={(fill) => setShape({ fill })} /></Row>}
-      <Row label={sh.kind === 'pulse' ? 'Ring' : 'Border'}>
+      {sh.kind === 'glow' && <Row label="Colour"><ColorField value={sh.fill} onChange={(fill) => setShape({ fill })} /></Row>}
+      {sh.kind !== 'pulse' && sh.kind !== 'glow' && <Row label="Fill"><ColorField optional value={sh.fill} onChange={(fill) => setShape({ fill })} /></Row>}
+      {sh.kind !== 'glow' && <Row label={sh.kind === 'pulse' ? 'Ring' : 'Border'}>
         <ColorField value={sh.stroke} onChange={(stroke) => setShape({ stroke })} />
         <NumberField value={sh.strokeWidth} min={0} max={200} onChange={(v) => setShape({ strokeWidth: Math.max(0, v) })} suffix="px" />
-      </Row>
+      </Row>}
       {sh.kind === 'rect' && (
         <Row label="Corners"><NumberField value={sh.radius} min={0} onChange={(v) => setShape({ radius: Math.max(0, v) })} suffix="px" /></Row>
       )}
@@ -299,6 +301,8 @@ const TRANSFORM_KEYS = new Set(['x', 'y', 'scale', 'rotation', 'opacity']);
 function AnimationSection({ clip, project }: { clip: Clip; project: Project }) {
   const playhead = useStore((s) => s.playhead);
   const tracking = useStore((s) => s.tracking);
+  const [followSize, setFollowSize] = useState(false);
+  const cursor = clip.shape?.kind === 'glow';
   const { setPlayhead, commit, toast } = useStore.getState();
   const kfs = clip.keyframes ?? [];
   const local = playhead - clip.start;
@@ -331,14 +335,19 @@ function AnimationSection({ clip, project }: { clip: Clip; project: Project }) {
           </div>
         ) : (
           <div className="insp-buttons">
-            <button className="btn small" disabled={!inside} title="Follow whatever is under this clip, from the playhead to the end of the clip" onClick={() => invokeCommand('clip.track', { clipId: clip.id })}>
-              <Crosshair size={13} /> Track motion
+            <button className="btn small" disabled={!inside} title="Follow whatever is under this clip, from the playhead to the end of the clip" onClick={() => invokeCommand('clip.track', { clipId: clip.id, followSize })}>
+              <Crosshair size={13} /> {cursor ? 'Follow cursor' : 'Track motion'}
             </button>
+            {!cursor && (
+              <label className="check" title="Also resize as the target gets closer or further away">
+                <input type="checkbox" checked={followSize} onChange={(e) => setFollowSize(e.target.checked)} /> and size
+              </label>
+            )}
           </div>
         )
       )}
       {kfs.length === 0 ? (
-        <p className="insp-hint">To follow something automatically, place this clip over it and choose Track motion. To animate by hand: add a keyframe, move the playhead, then move or resize the clip in the preview.</p>
+        <p className="insp-hint">{cursor ? 'Put the centre of the highlight exactly on the mouse cursor, then choose Follow cursor.' : 'To follow something automatically, place this clip over it and choose Track motion.'} To animate by hand: add a keyframe, move the playhead, then move or resize the clip in the preview.</p>
       ) : (
         <>
           <div className="kf-chips">
@@ -402,7 +411,7 @@ function ClipInspector({ clip: raw, project }: { clip: Clip; project: Project })
     <>
       <div className="insp-title">
         <span className={`dot clip-${clip.type}`} />
-        <strong>{clip.type === 'text' ? 'Text' : clip.type === 'shape' ? (clip.shape!.kind === 'pulse' ? 'Click pulse' : 'Shape') : clip.type === 'zoom' ? 'Zoom' : clip.type === 'effect' ? EFFECT_LABEL[clip.effect!.kind] : media?.name ?? 'Clip'}</strong>
+        <strong>{clip.type === 'text' ? 'Text' : clip.type === 'shape' ? (clip.shape!.kind === 'pulse' ? 'Click pulse' : clip.shape!.kind === 'glow' ? 'Cursor highlight' : 'Shape') : clip.type === 'zoom' ? 'Zoom' : clip.type === 'effect' ? EFFECT_LABEL[clip.effect!.kind] : media?.name ?? 'Clip'}</strong>
         <small>{formatTime(clip.start, project.fps)} · {clip.duration.toFixed(2)}s</small>
       </div>
       {clip.type === 'text' && <TextSection clip={clip} set={set} />}

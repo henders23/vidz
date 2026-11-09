@@ -1,12 +1,12 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight, Blend, Circle, Copy, Droplet, Focus, MousePointerClick, ZoomIn, Eye, EyeOff, Lock, LockOpen, Maximize2, Minus, Plus, Redo2, Scissors, Square, Trash2, Type,
+  ArrowRight, Blend, Circle, Copy, Droplet, Focus, MousePointer2, MousePointerClick, ZoomIn, Eye, EyeOff, Lock, LockOpen, Maximize2, Minus, Plus, Redo2, Scissors, Square, Trash2, Type,
   Undo2, Volume2, VolumeX, X,
 } from 'lucide-react';
 import { Clip, Track, canTransition, clipEnd } from '../types';
 import { armHistory, liveEdit, useStore } from '../store';
 import * as edit from '../lib/edit';
-import { addMediaToTimeline, filesFromDrop, runCommand, shortcutLabel, commands } from '../lib/commands';
+import { addMediaToTimeline, filesFromDrop, invokeCommand, runCommand, shortcutLabel, commands } from '../lib/commands';
 import { MediaRuntime, PEAKS_PER_SECOND } from '../lib/media';
 import { formatTime, startDrag } from '../lib/util';
 
@@ -61,6 +61,7 @@ function Toolbar() {
       <ToolButton command="insert.ellipse"><Circle size={16} /></ToolButton>
       <ToolButton command="insert.arrow"><ArrowRight size={16} /></ToolButton>
       <ToolButton command="insert.pulse"><MousePointerClick size={16} /></ToolButton>
+      <button className="icon-btn" title="Add cursor highlight (C)" aria-label="Add cursor highlight" onClick={() => invokeCommand('insert.cursorHighlight')}><MousePointer2 size={16} /></button>
       <span className="sep" />
       <LabelButton command="insert.zoom" label="Zoom"><ZoomIn size={14} /></LabelButton>
       <LabelButton command="insert.blur" label="Blur"><Droplet size={14} /></LabelButton>
@@ -207,7 +208,7 @@ const ClipView = memo(function ClipView({
   const inner = laneH - 8;
   const label =
     clip.type === 'text' ? clip.text!.content.split('\n')[0]
-    : clip.type === 'shape' ? (clip.shape!.kind === 'pulse' ? 'click pulse' : clip.shape!.kind)
+    : clip.type === 'shape' ? (clip.shape!.kind === 'pulse' ? 'click pulse' : clip.shape!.kind === 'glow' ? 'cursor highlight' : clip.shape!.kind)
     : clip.type === 'zoom' ? `Zoom ${(1 / clip.scale).toFixed(1)}×`
     : clip.type === 'effect' ? clip.effect!.kind
     : media?.name ?? 'Missing media';

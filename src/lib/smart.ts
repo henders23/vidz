@@ -11,7 +11,7 @@ import { PEAKS_PER_SECOND } from './media';
 import { clipSize, drawFrame } from './render';
 import { toSrt, toText, toVtt } from './subtitles';
 import { downloadBlob } from './util';
-import { simplify, toGray, track } from './track';
+import { simplify, toGray, track, trackCursor } from './track';
 import { clipEnd } from '../types';
 
 const s = () => useStore.getState();
@@ -127,11 +127,18 @@ export async function frameJpeg(time: number, maxSide = 1024): Promise<string> {
 let trackAbort: AbortController | null = null;
 export const cancelTracking = () => trackAbort?.abort();
 
+export interface TrackClipOptions {
+  /** Timeline time to start from (default: the playhead). */
+  from?: number;
+  /** Also follow the target getting bigger or smaller. */
+  followSize?: boolean;
+}
+
 /**
- * Make a clip follow whatever is underneath it, from `from` (default: the
- * playhead) to the end of the clip, by writing position keyframes.
+ * Make a clip follow whatever is underneath it, from `from` to the end of the
+ * clip, by writing keyframes.
  */
-export async function trackClip(clipId: string, from?: number) {
+export async function trackClip(clipId: string, { from, followSize }: TrackClipOptions = {}) {
   const { project, runtime, playhead } = s();
   if (s().tracking !== null) throw new Error('A motion track is already running');
   const raw = edit.getClip(project, clipId);
@@ -144,8 +151,17 @@ export async function trackClip(clipId: string, from?: number) {
     throw new Error('There is no footage on the tracks beneath this clip to follow');
   }
 
-  // Analyse small greyscale frames of everything beneath the clip.
-  const k = Math.min(1, 640 / Math.max(project.width, project.height));
+  const clip = edit.resolveClip(raw, start);
+  const size = clipSize(clip, project);
+  // A cursor highlight is much bigger than the cursor itself, which sits at its centre.
+  const cursor = clip.shape?.kind === 'glow';
+  const targetW = size.width * clip.scale * (cursor ? 0.3 : 1);
+  const targetH = size.height * clip.scale * (cursor ? 0.3 : 1);
+
+  // Analyse greyscale frames of everything beneath the clip: small for speed, but large
+  // enough that a small target (like a cursor) still has detail to recognise.
+  const longest = Math.max(project.width, project.height);
+  const k = Math.min(1, 1280 / longest, Math.max(640 / longest, 28 / Math.max(1, Math.min(targetW, targetH))));
   const canvas = new OffscreenCanvas(Math.round(project.width * k), Math.round(project.height * k));
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   const sources = new FrameSources(project, runtime);
@@ -161,24 +177,34 @@ export async function trackClip(clipId: string, from?: number) {
   const stride = Math.max(1, Math.round(project.fps / 15));
   const times: number[] = [];
   for (let n = Math.ceil(start * project.fps - 1e-6); n / project.fps < clipEnd(raw) - 1e-3; n += stride) times.push(n / project.fps);
-  const clip = edit.resolveClip(raw, start);
-  const size = clipSize(clip, project);
   const box = {
     x: (project.width / 2 + clip.x) * k,
     y: (project.height / 2 + clip.y) * k,
-    width: Math.max(8, size.width * clip.scale * k),
-    height: Math.max(8, size.height * clip.scale * k),
+    width: Math.max(8, targetW * k),
+    height: Math.max(8, targetH * k),
   };
 
   trackAbort = new AbortController();
   useStore.setState({ tracking: 0, playing: false });
   try {
-    const result = await track(frameAt, times, box, (tracking) => useStore.setState({ tracking }), trackAbort.signal);
+    const report = (tracking: number) => useStore.setState({ tracking });
+    const result = cursor
+      ? await trackCursor(frameAt, times, { x: box.x, y: box.y, size: Math.max(box.width, box.height) }, report, trackAbort.signal)
+      : await track(frameAt, times, box, { followSize }, report, trackAbort.signal);
+    if (cursor && result.points.every((pt) => pt.x === box.x && pt.y === box.y)) {
+      throw new Error('The cursor never seemed to move from there. Put the centre of the highlight exactly on the cursor and try again.');
+    }
     if (result.points.length < 2) {
       throw new Error('Nothing distinctive to follow under the box. Place it over something with visible detail and try again.');
     }
     // Keep only the keyframes needed to stay within about 4 canvas pixels of the tracked path.
-    const path = simplify(result.points, 4 * k).map((pt) => ({ time: pt.time, x: pt.x / k - project.width / 2, y: pt.y / k - project.height / 2 }));
+    // (A cursor highlight is large and soft, so it can be looser.)
+    const path = simplify(result.points, (cursor ? 10 : 4) * k, Math.max(box.width, box.height)).map((pt) => ({
+      time: pt.time,
+      x: pt.x / k - project.width / 2,
+      y: pt.y / k - project.height / 2,
+      scale: followSize ? pt.scale : undefined,
+    }));
     s().commit((p) => edit.setPathFrom(p, clipId, start, path));
     const until = result.lostAt === undefined ? '' : ` It lost the target at ${result.lostAt.toFixed(1)}s; move the box back onto it there and track again.`;
     return { keyframes: path.length, lostAt: result.lostAt, message: `Tracked with ${path.length} keyframes.${until}` };
@@ -187,6 +213,25 @@ export async function trackClip(clipId: string, from?: number) {
     trackAbort = null;
     useStore.setState({ tracking: null });
   }
+}
+
+/**
+ * Add a soft highlight for the mouse cursor, covering the rest of the footage under the
+ * playhead. The user drops it on the cursor; Track motion then makes it follow.
+ */
+export function addCursorHighlight(): string | null {
+  const { project, playhead } = s();
+  const footage = edit.visibleClips(project, playhead).reverse().find((c) => c.type === 'video');
+  if (!footage) throw new Error('Move the playhead onto a screen recording first');
+  let clipId: string | null = null;
+  s().commit((p) => {
+    const added = edit.addShapeClip(p, 'glow', { start: playhead }, clipEnd(footage) - playhead);
+    clipId = added.clipId;
+    return added.project;
+  });
+  if (clipId) s().select([clipId]);
+  s().setPanel('properties');
+  return clipId;
 }
 
 export type CaptionFormat = 'srt' | 'vtt' | 'txt';
