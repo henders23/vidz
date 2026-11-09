@@ -50,7 +50,7 @@ kbd {
 
 /* Layout */
 .app { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr) minmax(220px, 38%); overflow: hidden; }
-.workspace { display: grid; grid-template-columns: 264px minmax(0, 1fr) 288px; min-height: 0; border-bottom: 1px solid var(--border); }
+.workspace { display: grid; grid-template-columns: 264px minmax(0, 1fr) 328px; min-height: 0; border-bottom: 1px solid var(--border); }
 
 /* Buttons */
 .btn {
@@ -337,3 +337,48 @@ kbd {
   .saved, .search-btn kbd { display: none; }
   .project-name { width: 140px; }
 }
+
+/* Side panel tabs, assistant, transcript */
+.panel-tabs { display: flex; height: 40px; flex: none; border-bottom: 1px solid var(--border); }
+.panel-tabs button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; background: none; border: 0;
+  border-bottom: 2px solid transparent; color: var(--muted); font-weight: 500; font-size: 12px;
+}
+.panel-tabs button:hover { color: var(--text); }
+.panel-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.assistant, .transcript { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.quick-actions { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex: none; flex-wrap: wrap; }
+.transcribe-status { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1b1830; border-bottom: 1px solid var(--border); font-size: 12px; }
+.transcribe-status svg { flex: none; }
+.spin { animation: spin 0.9s linear infinite; }
+.chat { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.chat > * { flex: none; }
+.chat-empty { display: flex; flex-direction: column; gap: 12px; color: var(--muted); }
+.chat-empty p { margin: 0; }
+.suggestions { display: flex; flex-direction: column; gap: 6px; }
+.suggestions button { text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.suggestions button:hover:not(:disabled) { border-color: var(--accent); }
+.chat-msg { padding: 8px 11px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 92%; line-height: 1.45; }
+.chat-msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.chat-msg.assistant { align-self: flex-start; background: var(--panel-3); border-bottom-left-radius: 4px; }
+.chat-msg.error { align-self: stretch; max-width: none; background: rgba(255, 77, 94, 0.12); border: 1px solid rgba(255, 77, 94, 0.4); color: #ffb3ba; }
+.chat-tool { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); padding-left: 4px; }
+.chat-tool.done svg { color: var(--audio); }
+.chat-tool.failed svg { color: var(--danger); }
+.chat-input { display: flex; align-items: flex-end; gap: 8px; padding: 10px; border-top: 1px solid var(--border); flex: none; }
+.chat-input textarea { flex: 1; resize: none; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.chat-input textarea:focus { border-color: var(--accent); outline: none; }
+.send { width: 32px; height: 32px; flex: none; border-radius: 50%; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; }
+.send.stop { background: var(--danger); }
+.transcript-body { flex: 1; overflow-y: auto; padding: 12px; line-height: 1.75; font-size: 14px; }
+.transcript-body p { margin: 0 0 12px; }
+.transcript-body .insp-hint { padding: 0; font-size: 12px; line-height: 1.4; user-select: none; }
+.word { cursor: pointer; border-radius: 3px; }
+.word:hover { background: var(--panel-3); }
+.word.now { background: var(--accent); color: #fff; }
+.word.picked { background: rgba(255, 77, 94, 0.3); text-decoration: line-through; }
+.settings { display: flex; flex-direction: column; gap: 14px; }
+.settings label { display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
+.settings small { color: var(--muted); font-weight: 400; }
+.settings input, .settings select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-weight: 400; width: 100%; min-width: 0; }
+.key-row { display: flex; gap: 6px; align-items: center; }

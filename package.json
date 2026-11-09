@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.7.0",
+    "@huggingface/transformers": "^4.3.2",
     "idb-keyval": "^6.3.0",
     "lucide-react": "^1.70.0",
     "mediabunny": "^1.65.2",

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Mic, Monitor, X } from 'lucide-react';
 import { useStore } from '../store';
-import { commands, paletteCommands, shortcutLabel } from '../lib/commands';
+import { commands, invokeCommand, paletteCommands, shortcutLabel } from '../lib/commands';
 import { ExportOptions, ExportResult, exportProject, supportsExport } from '../lib/export';
 import { projectDuration } from '../lib/edit';
 import { useRecorder } from '../lib/recorder';
+import { CLAUDE_MODELS, WHISPER_MODELS, useSettings } from '../lib/settings';
 import { downloadBlob, formatBytes, formatDuration } from '../lib/util';
 
 function Modal({ title, onClose, children, className = '' }: { title?: string; onClose: () => void; children: React.ReactNode; className?: string }) {
@@ -144,7 +145,7 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
     const command = items[i];
     if (!command) return;
     onClose();
-    command.run({});
+    invokeCommand(command.id);
   };
   return (
     <Modal onClose={onClose} className="palette">
@@ -224,6 +225,47 @@ function RecordDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+function SettingsDialog({ onClose }: { onClose: () => void }) {
+  const settings = useSettings();
+  const [show, setShow] = useState(false);
+  return (
+    <Modal title="Settings" onClose={onClose}>
+      <div className="settings">
+        <label>Anthropic API key
+          <span className="key-row">
+            <input
+              type={show ? 'text' : 'password'}
+              value={settings.apiKey}
+              placeholder="sk-ant-…"
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => settings.update({ apiKey: e.target.value.trim() })}
+            />
+            <button className="btn small" type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
+          </span>
+          <small>Used by the assistant. It is stored only in this browser and sent only to Anthropic. Create one at console.anthropic.com; usage is billed to your Anthropic account.</small>
+        </label>
+        <label>Assistant model
+          <select value={settings.model} onChange={(e) => settings.update({ model: e.target.value })}>
+            {CLAUDE_MODELS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        </label>
+        <label>Transcription quality
+          <select value={settings.whisperModel} onChange={(e) => settings.update({ whisperModel: e.target.value })}>
+            {WHISPER_MODELS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+          <small>Speech is transcribed on this device; audio is never uploaded. The model downloads once and is then cached.</small>
+        </label>
+        <label>Spoken language
+          <input value={settings.language} placeholder="en" onChange={(e) => settings.update({ language: e.target.value.trim().toLowerCase() })} />
+          <small>A language code such as en, es, de, fr or ja. Applies to new transcriptions.</small>
+        </label>
+      </div>
+      <div className="modal-actions"><button className="btn primary" onClick={onClose}>Done</button></div>
+    </Modal>
+  );
+}
+
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
   const setDialog = useStore((s) => s.setDialog);
@@ -232,5 +274,6 @@ export function Dialogs() {
   if (dialog === 'palette') return <CommandPalette onClose={close} />;
   if (dialog === 'shortcuts') return <ShortcutsDialog onClose={close} />;
   if (dialog === 'record') return <RecordDialog onClose={close} />;
+  if (dialog === 'settings') return <SettingsDialog onClose={close} />;
   return null;
 }

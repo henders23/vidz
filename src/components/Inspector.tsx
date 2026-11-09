@@ -1,4 +1,6 @@
-import { AlignCenter, AlignLeft, AlignRight, Bold, Italic } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Bold, Captions, Italic, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Assistant } from './Assistant';
+import { Transcript } from './Transcript';
 import { Clip, EffectKind, EffectProps, Filters, Project, ShapeProps, TextProps, TransitionType, canTransition } from '../types';
 import { armHistory, liveEdit, useStore } from '../store';
 import * as edit from '../lib/edit';
@@ -368,22 +370,45 @@ function ClipInspector({ clip, project }: { clip: Clip; project: Project }) {
   );
 }
 
-export function Inspector() {
+function Properties() {
   const project = useStore((s) => s.project);
   const selection = useStore((s) => s.selection);
   const clip = selection.length === 1 ? edit.getClip(project, selection[0]) : undefined;
   return (
-    <aside className="inspector" aria-label="Properties">
-      <div className="panel-title">Properties</div>
-      <div className="insp-body">
-        {clip ? (
-          <ClipInspector key={clip.id} clip={clip} project={project} />
-        ) : selection.length > 1 ? (
-          <p className="insp-hint">{selection.length} clips selected. Press Delete to remove them, or select a single clip to edit it.</p>
-        ) : (
-          <ProjectSettings project={project} />
-        )}
+    <div className="insp-body">
+      {clip ? (
+        <ClipInspector key={clip.id} clip={clip} project={project} />
+      ) : selection.length > 1 ? (
+        <p className="insp-hint">{selection.length} clips selected. Press Delete to remove them, or select a single clip to edit it.</p>
+      ) : (
+        <ProjectSettings project={project} />
+      )}
+    </div>
+  );
+}
+
+const TABS = [
+  ['properties', 'Properties', SlidersHorizontal],
+  ['assistant', 'Assistant', Sparkles],
+  ['transcript', 'Transcript', Captions],
+] as const;
+
+/** Right-hand panel: clip properties, the AI assistant, and the transcript. */
+export function Inspector() {
+  const panel = useStore((s) => s.panel);
+  const setPanel = useStore((s) => s.setPanel);
+  return (
+    <aside className="inspector" aria-label="Side panel">
+      <div className="panel-tabs" role="tablist">
+        {TABS.map(([id, label, Icon]) => (
+          <button key={id} role="tab" aria-selected={panel === id} className={panel === id ? 'on' : ''} onClick={() => setPanel(id)}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
       </div>
+      {panel === 'properties' && <Properties />}
+      {panel === 'assistant' && <Assistant />}
+      {panel === 'transcript' && <Transcript />}
     </aside>
   );
 }

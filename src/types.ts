@@ -114,6 +114,8 @@ export interface Clip {
   shape?: ShapeProps;
   effect?: EffectProps;
   transition?: Transition;
+  /** Text clip generated from the transcript; regenerating captions replaces these. */
+  caption?: boolean;
 }
 
 export interface Project {
@@ -134,3 +136,20 @@ export const hasSound = (c: Clip) => c.type === 'video' || c.type === 'audio';
 export const clipEnd = (c: Clip) => c.start + c.duration;
 export const isOverlay = (type: ClipType) => type === 'text' || type === 'shape' || type === 'zoom' || type === 'effect';
 export const canTransition = (c: Clip) => c.type === 'video' || c.type === 'image' || c.type === 'text' || c.type === 'shape';
+
+/** A transcribed word, timed in seconds within its source media. */
+export interface Word {
+  text: string;
+  start: number;
+  end: number;
+}
+
+/** A word placed on the timeline through the clip that plays it. */
+export interface TimelineWord extends Word {
+  clipId: string;
+}
+
+export interface TimeRange {
+  start: number;
+  end: number;
+}

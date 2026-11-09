@@ -1,6 +1,6 @@
 /** Media import: probing, filmstrip thumbnails, waveform peaks, IndexedDB persistence. */
 import { del, get, set } from 'idb-keyval';
-import { MediaAsset, MediaKind } from '../types';
+import { MediaAsset, MediaKind, Word } from '../types';
 import { uid } from './util';
 
 export const PEAKS_PER_SECOND = 50;
@@ -22,6 +22,8 @@ export interface MediaRuntime {
   poster?: string;
   filmstrip?: Filmstrip;
   peaks?: Float32Array;
+  /** Word-level transcript, once the media has been transcribed. */
+  transcript?: Word[];
 }
 
 interface StoredExtras {
@@ -210,10 +212,13 @@ export async function importFile(file: File | Blob, name?: string): Promise<{ as
 export async function loadMediaRuntime(id: string): Promise<MediaRuntime | null> {
   const blob = await get<Blob>(blobKey(id));
   if (!blob) return null;
-  return toRuntime(blob, (await get<StoredExtras>(extrasKey(id))) ?? {});
+  const runtime = toRuntime(blob, (await get<StoredExtras>(extrasKey(id))) ?? {});
+  runtime.transcript = await get<Word[]>(`vidz:transcript:${id}`);
+  return runtime;
 }
 
 export async function deleteMediaData(id: string) {
   await del(blobKey(id));
   await del(extrasKey(id));
+  await del(`vidz:transcript:${id}`);
 }

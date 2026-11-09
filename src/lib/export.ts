@@ -71,7 +71,7 @@ async function mixAudio(project: Project, runtime: Record<string, MediaRuntime>,
 }
 
 /** Owns the decode elements used during export, independent of the live preview. */
-class FrameSources {
+export class FrameSources {
   private videos = new Map<string, HTMLVideoElement>();
   private images = new Map<string, ImageBitmap>();
   constructor(private project: Project, private runtime: Record<string, MediaRuntime>) {}

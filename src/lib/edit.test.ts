@@ -156,3 +156,68 @@ describe('tutorial tools', () => {
     expect(edit.setTransition(fx.project, fx.clipId, 'wipe')).toBe(fx.project);
   });
 });
+
+describe('AI-assisted editing primitives', () => {
+  it('ripple cut removes ranges from every track and keeps them in sync', () => {
+    const v = add(setup(), 'v', 0); // video 0-10
+    const a = add(v.p, 'a', 0); // music 0-30
+    const t = edit.addTextClip(a.p, { start: 6 }); // text 6-11
+    const out = edit.rippleCut(t.project, [{ start: 4, end: 5 }, { start: 2, end: 3 }]);
+    const vids = out.clips.filter((c) => c.type === 'video').sort((x, y) => x.start - y.start);
+    // 0-2 | 3-4 | 5-10 of the source, butted together.
+    expect(vids.map((c) => [c.start, c.duration, c.offset])).toEqual([[0, 2, 0], [2, 1, 3], [3, 5, 5]]);
+    expect(new Set(vids.map((c) => c.id)).size).toBe(3);
+    expect(out.clips.filter((c) => c.type === 'audio').reduce((n, c) => n + c.duration, 0)).toBe(28);
+    expect(edit.getClip(out, t.clipId)).toMatchObject({ start: 4, duration: 5 });
+    expect(edit.projectDuration(out)).toBe(28);
+  });
+
+  it('ripple cut drops clips that fall wholly inside a range and leaves locked tracks alone', () => {
+    const v = add(setup(), 'v', 0);
+    const t = edit.addTextClip(v.p, { start: 2 }); // 2-7
+    const locked = edit.updateTrack(t.project, edit.getClip(v.p, v.id)!.trackId, { locked: true });
+    const out = edit.rippleCut(locked, [{ start: 1, end: 8 }]);
+    expect(edit.getClip(out, t.clipId)).toBeUndefined();
+    expect(edit.getClip(out, v.id)).toMatchObject({ start: 0, duration: 10 });
+  });
+
+  it('finds silent pauses from waveform peaks', () => {
+    const { p } = add(setup(), 'v', 0);
+    const rate = 50;
+    const peaks = new Float32Array(10 * rate).fill(0.5);
+    peaks.fill(0.001, 2 * rate, 4 * rate); // 2s pause
+    peaks.fill(0.001, 6 * rate, 6.3 * rate); // too short to count
+    const found = edit.findSilences(p, () => peaks, rate, { minDuration: 0.6, padding: 0.1 });
+    expect(found).toHaveLength(1);
+    expect(found[0].start).toBeCloseTo(2.1);
+    expect(found[0].end).toBeCloseTo(3.9);
+    // Unknown waveform => assume sound; muted clip => not considered at all.
+    expect(edit.findSilences(p, () => undefined, rate)).toEqual([]);
+    expect(edit.findSilences(edit.updateClip(p, p.clips[0].id, { volume: 0 }), () => peaks, rate)).toEqual([]);
+  });
+
+  it('maps transcript words through trims and speed onto the timeline', () => {
+    const { p, id } = add(setup(), 'v', 5);
+    const words = [{ text: 'cut', start: 0.5, end: 0.9 }, { text: 'hello', start: 2, end: 2.5 }, { text: 'world', start: 4, end: 5 }];
+    const trimmed = edit.setClipSpeed(edit.trimClip(p, id, 'start', 6), id, 2); // source from 1s, 2x
+    const mapped = edit.timelineWords(trimmed, () => words);
+    expect(mapped.map((w) => [w.text, w.start, w.end])).toEqual([['hello', 6.5, 6.75], ['world', 7.5, 8]]);
+  });
+
+  it('builds caption lines and replaces captions on a dedicated track', () => {
+    const { p } = add(setup(), 'v', 0);
+    const w = (text: string, start: number) => ({ text, start, end: start + 0.3, clipId: 'x' });
+    const lines = edit.captionLines([w('Hello', 0), w('there.', 0.4), w('This', 1), w('is', 1.4), w('vidz', 1.8), w('later', 5)], 20);
+    expect(lines.map((l) => l.text)).toEqual(['Hello there.', 'This is vidz', 'later']);
+    expect(lines[0].end).toBeLessThanOrEqual(lines[1].start);
+    const once = edit.setCaptions(p, lines);
+    const twice = edit.setCaptions(once, lines.slice(0, 2));
+    expect(once.clips.filter((c) => c.caption)).toHaveLength(3);
+    expect(twice.clips.filter((c) => c.caption)).toHaveLength(2);
+    expect(twice.tracks.filter((t) => t.name === edit.CAPTION_TRACK)).toHaveLength(1);
+    expect(twice.tracks[0].name).toBe(edit.CAPTION_TRACK);
+    const styled = edit.styleCaptions(twice, { y: 100, text: { color: '#ffff00' } });
+    expect(styled.clips.filter((c) => c.caption).every((c) => c.y === 100 && c.text!.color === '#ffff00' && c.text!.content.length > 0)).toBe(true);
+    expect(edit.setCaptions(twice, []).clips.some((c) => c.caption)).toBe(false);
+  });
+});

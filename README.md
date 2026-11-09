@@ -27,6 +27,9 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
   - *Spotlight* – dim everything except the area you want people to look at.
   - *Click pulse* – an animated ring to mark a click or a spot.
   - *Transitions* – cross dissolve, wipe, push, zoom and fade-through between clips.
+- **AI assistant** – describe an edit in plain English and Claude carries it out on your timeline using the editor's own commands. It can read the transcript and look at frames, and each request is a single undo step. Needs your own Anthropic API key (Settings), which stays in your browser.
+- **Transcript tools** – speech is transcribed on your device with Whisper (nothing is uploaded). Generate captions, click a word to jump to it, or select words and cut them out of the video.
+- **Remove silences** – cuts silent pauses out of the whole timeline in one click. No AI or key needed.
 - **Export** – frame-accurate MP4 (or WebM) at a chosen resolution, frame rate and quality, with mixed audio.
 - **Autosave** – the project and its media are stored in the browser (IndexedDB) and restored on reload.
 - **Command palette** (`Ctrl/Cmd+K`) and keyboard shortcuts (`?`).
@@ -43,6 +46,9 @@ Use a recent Chrome or Edge for the best experience (export uses WebCodecs).
 | `src/lib/export.ts` | Offline render via WebCodecs + [mediabunny](https://mediabunny.dev), audio mixed with `OfflineAudioContext`. |
 | `src/lib/media.ts` | Import, probing, thumbnails, waveform peaks, IndexedDB storage. |
 | `src/lib/recorder.ts` | Screen / camera / microphone capture. |
+| `src/lib/ai.ts` | The assistant: a streaming Claude tool-use loop whose tools are generated from the command registry. |
+| `src/lib/smart.ts` | Captions, silence removal, project summary and frame snapshots (used by the UI and as assistant tools). |
+| `src/lib/transcribe.ts`, `whisper.worker.ts` | In-browser Whisper speech-to-text in a web worker. |
 | `src/store.ts` | Zustand store: project, selection, playhead, undo history, autosave. |
 | `src/components/` | React UI. |
 
@@ -53,23 +59,28 @@ track *beneath* them is rendered. That keeps them ordinary timeline clips (move,
 undo) and means a callout placed on a track above a zoom stays fixed on screen while the footage
 below zooms.
 
-### Built for AI editing
+### How the assistant works
 
-Every edit is a serialisable command against a JSON project, which is exactly the shape an AI agent
-needs. The same API is already exposed for scripting:
+Every edit is a serialisable command against a JSON project. `src/lib/ai.ts` turns each
+parameterised command into a Claude tool, sends the user's request with a compact project summary,
+and runs the tool calls Claude returns until it is done. Adding a command to the registry makes it
+available to the assistant, the command palette and scripts at once:
 
 ```js
 vidz.listCommands();                                   // id, description and parameter schema for each command
 vidz.getProject();                                     // the full project document
 vidz.run('timeline.addText', { content: 'Intro', start: 0, duration: 3 });
-vidz.run('clip.update', { clipId, patch: { scale: 0.5, fadeIn: 1 } });
+vidz.run('timeline.removeSilences', { minDuration: 0.8 });
 ```
 
-`listCommands()` maps directly onto LLM tool definitions, so an assistant panel can be added without
-touching the editor core.
+Privacy: the assistant sends Claude the project summary, your message, the transcript when it asks
+for it, and still frames when it needs to see the picture. Video and audio files never leave the
+browser. Requests go directly from the browser to `api.anthropic.com` with the key from Settings;
+there is no vidz server. Because the key lives in the browser, this setup is for personal use, not
+for hosting vidz publicly with a shared key.
 
 ## Roadmap
 
-1. AI assistant: chat-driven editing on top of the command layer, transcription, captions, silence and filler-word removal.
-2. Keyframed motion (so a spotlight or blur can follow a moving target) and automatic cursor effects.
+1. Keyframed motion (so a spotlight or blur can follow a moving target) and automatic cursor effects.
+2. Caption export (SRT/VTT), speaker labels, and faster transcription on WebGPU.
 3. Faster export (WebCodecs decoding instead of per-frame seeking), multiple projects, optional desktop build.

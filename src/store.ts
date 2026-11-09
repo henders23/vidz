@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
-import { Project } from './types';
+import { Project, hasSound } from './types';
+import { TranscribeProgress, transcribe } from './lib/transcribe';
 import * as edit from './lib/edit';
 import { MediaRuntime, deleteMediaData, importFile, loadMediaRuntime } from './lib/media';
 import { clamp } from './lib/util';
@@ -25,7 +26,10 @@ interface State {
   past: Project[];
   future: Project[];
   importing: number;
-  dialog: null | 'export' | 'palette' | 'record' | 'shortcuts';
+  dialog: null | 'export' | 'palette' | 'record' | 'shortcuts' | 'settings';
+  panel: 'properties' | 'assistant' | 'transcript';
+  /** Progress of the running transcription, if any. */
+  transcribing: null | { name: string; stage: TranscribeProgress['stage']; progress?: number };
   toasts: Toast[];
 
   /** Apply an edit as a single undo step. */
@@ -41,6 +45,9 @@ interface State {
   setPlaying: (playing: boolean) => void;
   setZoom: (pxPerSec: number) => void;
   setDialog: (d: State['dialog']) => void;
+  setPanel: (p: State['panel']) => void;
+  /** Transcribe every clip on the timeline that has speech and no transcript yet. Returns false if nothing could be transcribed. */
+  ensureTranscripts: () => Promise<boolean>;
   toast: (message: string, kind?: Toast['kind']) => void;
   importFiles: (files: Iterable<File>) => Promise<string[]>;
   deleteMedia: (id: string) => void;
@@ -62,6 +69,8 @@ export const useStore = create<State>((set, get) => ({
   future: [],
   importing: 0,
   dialog: null,
+  panel: 'properties',
+  transcribing: null,
   toasts: [],
 
   commit: (fn) => {
@@ -98,6 +107,26 @@ export const useStore = create<State>((set, get) => ({
   },
   setZoom: (pxPerSec) => set({ pxPerSec: clamp(pxPerSec, 4, 600) }),
   setDialog: (dialog) => set({ dialog, playing: false }),
+  setPanel: (panel) => set({ panel }),
+  ensureTranscripts: async () => {
+    if (get().transcribing) throw new Error('A transcription is already running');
+    const { project } = get();
+    const ids = [...new Set(project.clips.filter((c) => hasSound(c) && c.mediaId).map((c) => c.mediaId!))].filter(
+      (id) => edit.getMedia(project, id)?.hasAudio,
+    );
+    try {
+      for (const id of ids) {
+        const rt = get().runtime[id];
+        if (!rt || rt.transcript) continue;
+        const name = edit.getMedia(project, id)?.name ?? 'media';
+        const transcript = await transcribe(id, rt.blob, (p) => set({ transcribing: { name, ...p } }));
+        set((s) => (s.runtime[id] ? { runtime: { ...s.runtime, [id]: { ...s.runtime[id], transcript } } } : {}));
+      }
+    } finally {
+      set({ transcribing: null });
+    }
+    return ids.some((id) => get().runtime[id]?.transcript);
+  },
   toast: (message, kind = 'info') => {
     const id = ++toastId;
     set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }));

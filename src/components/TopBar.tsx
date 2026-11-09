@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Download, FilePlus2, Keyboard, Search, Square, Video } from 'lucide-react';
+import { Check, Download, FilePlus2, Keyboard, Search, Settings, Sparkles, Square, Video } from 'lucide-react';
 import { armHistory, liveEdit, useStore } from '../store';
 import { runCommand, shortcutLabel } from '../lib/commands';
 import { canRecordScreen, useRecorder } from '../lib/recorder';
@@ -51,6 +51,8 @@ export function TopBar() {
       <button className="search-btn" onClick={() => runCommand('view.palette')}>
         <Search size={14} /> Search actions <kbd>{shortcutLabel('Mod+K')}</kbd>
       </button>
+      <button className="btn" title="Open the AI assistant (A)" onClick={() => runCommand('view.assistant')}><Sparkles size={15} /> Assistant</button>
+      <button className="icon-btn" title="Settings" aria-label="Settings" onClick={() => runCommand('view.settings')}><Settings size={17} /></button>
       <button className="icon-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={() => runCommand('view.shortcuts')}><Keyboard size={17} /></button>
       <button
         className="icon-btn"

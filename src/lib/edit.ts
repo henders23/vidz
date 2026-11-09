@@ -4,6 +4,7 @@
  * and safe to call from automation (the command layer / future AI editing).
  */
 import {
+  TimeRange, TimelineWord, Word, hasSound,
   Clip, ClipType, EffectKind, MediaAsset, Project, ShapeKind, Track, TrackKind, Transition, TransitionType, canTransition, clipEnd,
   isOverlay, isVisual,
 } from '../types';
@@ -419,4 +420,212 @@ export function zoomTransform(p: Project, time: number, trackId: string, bypassI
     }
   }
   return view;
+}
+
+/** Sort, clip to >= 0, and merge overlapping ranges. */
+export function mergeRanges(ranges: TimeRange[]): TimeRange[] {
+  const sorted = ranges
+    .map((r) => ({ start: Math.max(0, r.start), end: r.end }))
+    .filter((r) => r.end - r.start > 1e-3)
+    .sort((a, b) => a.start - b.start);
+  const out: TimeRange[] = [];
+  for (const r of sorted) {
+    const last = out[out.length - 1];
+    if (last && r.start <= last.end + 1e-6) last.end = Math.max(last.end, r.end);
+    else out.push({ ...r });
+  }
+  return out;
+}
+
+/**
+ * Remove time ranges from the whole timeline and close the gaps, keeping every
+ * unlocked track in sync (the "jump cut" used for silence and mistake removal).
+ */
+export function rippleCut(p: Project, ranges: TimeRange[]): Project {
+  const locked = new Set(p.tracks.filter((t) => t.locked).map((t) => t.id));
+  let clips = p.clips;
+  // Work from the end so earlier ranges keep their original times.
+  for (const { start: a, end: b } of mergeRanges(ranges).reverse()) {
+    const gap = b - a;
+    clips = clips.flatMap((clip) => {
+      if (locked.has(clip.trackId) || clipEnd(clip) <= a + 1e-6) return [clip];
+      if (clip.start >= b - 1e-6) return [{ ...clip, start: clip.start - gap }];
+      const timed = clip.type === 'video' || clip.type === 'audio';
+      const parts: Clip[] = [];
+      const keepLeft = a - clip.start > MIN_CLIP;
+      if (keepLeft) parts.push({ ...clip, duration: a - clip.start, fadeOut: 0 });
+      if (clipEnd(clip) - b > MIN_CLIP) {
+        parts.push({
+          ...clip,
+          id: keepLeft ? uid() : clip.id,
+          start: a,
+          duration: clipEnd(clip) - b,
+          offset: timed ? clip.offset + (b - clip.start) * clip.speed : 0,
+          fadeIn: 0,
+          transition: undefined,
+        });
+      }
+      return parts;
+    });
+  }
+  return { ...p, clips };
+}
+
+export interface SilenceOptions {
+  /** Shortest pause worth removing, seconds. */
+  minDuration?: number;
+  /** Level below which audio counts as silence, in dBFS. */
+  thresholdDb?: number;
+  /** Breathing room kept on each side of the speech, seconds. */
+  padding?: number;
+}
+
+/**
+ * Timeline ranges where everything audible is quiet. `peaksOf` returns a media
+ * item's waveform peaks (`rate` values per second), or undefined if unknown, in
+ * which case that clip is assumed to be making sound.
+ */
+export function findSilences(
+  p: Project,
+  peaksOf: (mediaId: string) => Float32Array | undefined,
+  rate: number,
+  { minDuration = 0.6, thresholdDb = -38, padding = 0.12 }: SilenceOptions = {},
+): TimeRange[] {
+  const muted = new Set(p.tracks.filter((t) => t.muted).map((t) => t.id));
+  const audible = p.clips.filter((c) => hasSound(c) && !muted.has(c.trackId) && c.volume > 0 && getMedia(p, c.mediaId)?.hasAudio);
+  const threshold = 10 ** (thresholdDb / 20);
+  const steps = Math.ceil(projectDuration(p) * rate);
+  const ranges: TimeRange[] = [];
+  let runStart = -1;
+  const close = (endStep: number) => {
+    if (runStart < 0) return;
+    const start = runStart / rate + padding;
+    const end = endStep / rate - padding;
+    if (endStep / rate - runStart / rate >= minDuration && end - start > 0.05) ranges.push({ start, end });
+    runStart = -1;
+  };
+  for (let i = 0; i < steps; i++) {
+    const t = (i + 0.5) / rate;
+    let covered = false;
+    let loud = false;
+    for (const clip of audible) {
+      if (t < clip.start || t >= clipEnd(clip)) continue;
+      covered = true;
+      const peaks = peaksOf(clip.mediaId!);
+      if (!peaks) {
+        loud = true;
+        break;
+      }
+      // A step can span several source samples when the clip is sped up.
+      const from = Math.floor((clip.offset + (t - clip.start) * clip.speed) * rate);
+      const to = Math.max(from + 1, Math.ceil(from + clip.speed));
+      for (let j = from; j < to && j < peaks.length; j++) {
+        if (peaks[j] * clip.volume > threshold) loud = true;
+      }
+      if (loud) break;
+    }
+    // Stretches with no audio clip at all (title cards, stills) are left alone.
+    if (covered && !loud) {
+      if (runStart < 0) runStart = i;
+    } else close(i);
+  }
+  close(steps);
+  return ranges;
+}
+
+/** Every transcribed word as it plays on the timeline, in order. */
+export function timelineWords(p: Project, wordsOf: (mediaId: string) => Word[] | undefined): TimelineWord[] {
+  const muted = new Set(p.tracks.filter((t) => t.muted).map((t) => t.id));
+  const out: TimelineWord[] = [];
+  for (const clip of p.clips) {
+    if (!hasSound(clip) || !clip.mediaId || muted.has(clip.trackId)) continue;
+    const from = clip.offset;
+    const to = clip.offset + clip.duration * clip.speed;
+    for (const w of wordsOf(clip.mediaId) ?? []) {
+      const mid = (w.start + w.end) / 2;
+      if (mid < from || mid >= to) continue;
+      out.push({
+        text: w.text,
+        start: clip.start + (Math.max(w.start, from) - from) / clip.speed,
+        end: clip.start + (Math.min(w.end, to) - from) / clip.speed,
+        clipId: clip.id,
+      });
+    }
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+export interface CaptionLine extends TimeRange {
+  text: string;
+}
+
+/** Group words into short, readable caption lines. */
+export function captionLines(words: TimelineWord[], maxChars = 34): CaptionLine[] {
+  const lines: CaptionLine[] = [];
+  let current: TimelineWord[] = [];
+  const flush = () => {
+    if (!current.length) return;
+    lines.push({ text: current.map((w) => w.text).join(' '), start: current[0].start, end: current[current.length - 1].end });
+    current = [];
+  };
+  for (const word of words) {
+    const last = current[current.length - 1];
+    const length = current.reduce((n, w) => n + w.text.length + 1, 0);
+    // Let a clause-ending word run slightly over rather than strand it alone on the next caption.
+    const limit = /[.!?,;:]$/.test(word.text) ? maxChars + 10 : maxChars;
+    if (last && (word.start - last.end > 0.7 || length + word.text.length > limit || /[.!?]$/.test(last.text))) flush();
+    current.push(word);
+  }
+  flush();
+  // Keep each caption up a little longer for readability, but never into the next one.
+  return lines.map((line, i) => {
+    const next = lines[i + 1]?.start ?? Infinity;
+    return { ...line, end: Math.max(line.start + 0.2, Math.min(Math.max(line.end, line.start + 0.9), next)) };
+  });
+}
+
+export const CAPTION_TRACK = 'Captions';
+
+/** Replace any existing captions with text clips built from `lines`, on a dedicated top track. */
+export function setCaptions(p: Project, lines: CaptionLine[]): Project {
+  let project: Project = { ...p, clips: p.clips.filter((c) => !c.caption) };
+  if (!lines.length) return project;
+  let track = project.tracks.find((t) => t.kind === 'video' && t.name === CAPTION_TRACK && !project.clips.some((c) => c.trackId === t.id));
+  if (!track) {
+    const added = addTrack(project, 'video');
+    track = { ...added.track, name: CAPTION_TRACK };
+    project = updateTrack(added.project, track.id, { name: CAPTION_TRACK });
+  }
+  const fontSize = Math.round(Math.min(p.height / 18, p.width / 21));
+  const total = projectDuration(project);
+  const captions = lines.filter((line) => line.start < total - MIN_CLIP).map((line) => {
+    // Captions never run past the end of the video.
+    const clip = makeClip('text', track!.id, line.start, Math.max(MIN_CLIP, Math.min(line.end, total) - line.start));
+    clip.caption = true;
+    clip.y = Math.round(p.height * 0.38);
+    clip.text = {
+      content: line.text,
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontSize,
+      color: '#ffffff',
+      bold: true,
+      italic: false,
+      align: 'center',
+      background: '',
+      outline: '#000000',
+      outlineWidth: Math.max(2, Math.round(fontSize / 12)),
+    };
+    return clip;
+  });
+  return { ...project, clips: [...project.clips, ...captions] };
+}
+
+/** Restyle every caption at once (font, size, colours, vertical position). */
+export function styleCaptions(p: Project, patch: { y?: number; text?: Partial<NonNullable<Clip['text']>> }): Project {
+  return {
+    ...p,
+    clips: p.clips.map((c) =>
+      c.caption && c.text ? { ...c, y: patch.y ?? c.y, text: { ...c.text, ...patch.text, content: c.text.content } } : c,
+    ),
+  };
 }

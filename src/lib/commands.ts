@@ -8,6 +8,7 @@ import { Clip, EffectKind, Project, ShapeKind, TransitionType, canTransition, cl
 import { useStore } from '../store';
 import * as edit from './edit';
 import { kindOf } from './media';
+import * as smart from './smart';
 
 type Params = Record<string, unknown>;
 
@@ -18,6 +19,9 @@ export interface Command {
   shortcut?: string;
   /** JSON schema of the parameters. Commands without required params appear in the palette. */
   params?: { type: 'object'; properties: Record<string, unknown>; required?: string[] };
+  /** Not shown in the command palette (data lookups meant for automation). */
+  hidden?: boolean;
+  /** May be async. A returned `{ message }` is shown to the user when run from the UI. */
   run: (params: Params) => unknown;
 }
 
@@ -292,6 +296,97 @@ export const commands: Command[] = [
     params: { type: 'object', properties: { name: str, width: num, height: num, fps: num, background: str } },
     run: (patch) => s().commit((p) => ({ ...p, ...(patch as Partial<Project>) })),
   },
+
+  // Transcript-powered tools. Usable from the palette, and the assistant's main levers.
+  {
+    id: 'timeline.transcribe',
+    title: 'Transcribe speech',
+    description: 'Transcribe the speech on the timeline (runs on this device).',
+    run: async () => ({ message: `Transcribed ${(await smart.ensureWords()).length} words` }),
+  },
+  {
+    id: 'timeline.addCaptions',
+    title: 'Add captions',
+    description: 'Generate captions from the speech on the timeline, replacing any existing captions. Transcribes first if needed.',
+    params: { type: 'object', properties: { maxChars: { type: 'number', description: 'Longest caption line in characters (default 34).' } } },
+    run: ({ maxChars }) => smart.addCaptions(maxChars === undefined ? undefined : Number(maxChars)),
+  },
+  {
+    id: 'captions.style',
+    title: 'Style all captions',
+    description: 'Restyle every caption at once. y is the vertical offset from the canvas centre in pixels (positive = lower).',
+    params: {
+      type: 'object',
+      properties: { y: num, fontSize: num, color: str, background: { type: 'string', description: 'Box colour, or "" for none.' }, outline: str, outlineWidth: num, bold: { type: 'boolean' }, italic: { type: 'boolean' }, fontFamily: str },
+    },
+    hidden: true,
+    run: ({ y, ...text }) => s().commit((p) => edit.styleCaptions(p, { y: y === undefined ? undefined : Number(y), text })),
+  },
+  {
+    id: 'captions.remove',
+    title: 'Remove captions',
+    description: 'Delete all generated captions.',
+    run: () => s().commit((p) => edit.setCaptions(p, [])),
+  },
+  {
+    id: 'timeline.removeSilences',
+    title: 'Remove silences',
+    description: 'Cut silent pauses out of the whole timeline and close the gaps on every track.',
+    params: {
+      type: 'object',
+      properties: {
+        minDuration: { type: 'number', description: 'Shortest pause to remove, seconds (default 0.6).' },
+        thresholdDb: { type: 'number', description: 'Level counted as silence in dBFS (default -38; closer to 0 cuts more).' },
+        padding: { type: 'number', description: 'Quiet kept either side of speech, seconds (default 0.12).' },
+      },
+    },
+    run: (options) => smart.removeSilences(options as edit.SilenceOptions),
+  },
+  {
+    id: 'timeline.findSilences',
+    title: 'Find silences',
+    description: 'List silent ranges on the timeline without changing anything.',
+    params: { type: 'object', properties: { minDuration: num, thresholdDb: num, padding: num } },
+    hidden: true,
+    run: (options) => smart.silences(options as edit.SilenceOptions),
+  },
+  {
+    id: 'timeline.cutRanges',
+    title: 'Cut time ranges',
+    description: 'Remove time ranges (seconds) from the whole timeline and close the gaps, keeping all tracks in sync. Times refer to the timeline before this call; pass every range in one call.',
+    params: {
+      type: 'object',
+      properties: { ranges: { type: 'array', items: { type: 'object', properties: { start: num, end: num }, required: ['start', 'end'] } } },
+      required: ['ranges'],
+    },
+    run: ({ ranges }) => s().commit((p) => edit.rippleCut(p, ranges as { start: number; end: number }[])),
+  },
+  {
+    id: 'timeline.getTranscript',
+    title: 'Get transcript',
+    description: 'Read what is said on the timeline as timed lines (timeline seconds). Transcribes first if needed, which can take a while. Set words=true for word-level timing within a short window.',
+    params: { type: 'object', properties: { start: num, end: num, words: { type: 'boolean' } } },
+    hidden: true,
+    run: ({ start, end, words }) => smart.transcript(start === undefined ? 0 : Number(start), end === undefined ? Infinity : Number(end), !!words),
+  },
+  {
+    id: 'project.get',
+    title: 'Get project state',
+    description: 'Return the current project: settings, tracks (top layer first), media library and clips.',
+    params: { type: 'object', properties: {} },
+    hidden: true,
+    run: () => smart.snapshot(),
+  },
+  {
+    id: 'view.frame',
+    title: 'View frame',
+    description: 'Look at the composited video frame at a timeline time. Use it to find where things are on screen before placing zooms, blurs, spotlights or callouts.',
+    params: { type: 'object', properties: { time: num }, required: ['time'] },
+    hidden: true,
+    run: async ({ time }) => ({ image: await smart.frameJpeg(Number(time)) }),
+  },
+  { id: 'view.assistant', title: 'Open AI assistant', description: 'Show the assistant panel.', shortcut: 'A', run: () => s().setPanel('assistant') },
+  { id: 'view.settings', title: 'Settings', description: 'API key, AI model and transcription settings.', run: () => s().setDialog('settings') },
 ];
 
 const byId = new Map(commands.map((c) => [c.id, c]));
@@ -305,7 +400,18 @@ export function runCommand(id: string, params: Params = {}) {
   return command.run(params);
 }
 
-export const paletteCommands = () => commands.filter((c) => !c.params?.required?.length && c.id !== 'view.palette' && c.id !== 'project.update');
+export const paletteCommands = () => commands.filter((c) => !c.hidden && !c.params?.required?.length && c.id !== 'view.palette' && c.id !== 'project.update');
+
+/** Run a command from the UI: surfaces its result message, and any failure, as a toast. */
+export function invokeCommand(id: string, params: Params = {}) {
+  Promise.resolve()
+    .then(() => runCommand(id, params))
+    .then((result) => {
+      const message = (result as { message?: unknown } | undefined)?.message;
+      if (typeof message === 'string') s().toast(message);
+    })
+    .catch((err) => s().toast(err instanceof Error ? err.message : String(err), 'error'));
+}
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -347,7 +453,7 @@ export function handleShortcut(e: KeyboardEvent): boolean {
   for (const combo of comboOf(e)) {
     const command = byShortcut.get(combo);
     if (command) {
-      command.run({});
+      invokeCommand(command.id);
       return true;
     }
   }
